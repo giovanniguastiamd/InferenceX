@@ -72,6 +72,7 @@ class Fields(Enum):
     AVAILABLE_CPU_DRAM_MIB = 'available-cpu-dram-mib'
     DRAM_UTILIZATION = 'dram-utilization'
     GPUS_PER_NODE = 'gpus-per-node'
+    NODE_COUNT = 'node-count'
     DURATION = 'duration'
 
     # Matrix entry fields
@@ -227,6 +228,9 @@ class MultiNodeMatrixEntry(BaseModel):
         alias=Fields.SPEC_DECODING.value
     )
     runner: str
+    node_count: Optional[int] = Field(
+        default=None, alias=Fields.NODE_COUNT.value, gt=0, strict=True
+    )
     isl: int
     osl: int
     prefill: WorkerConfig
@@ -318,6 +322,9 @@ class MultiNodeAgenticMatrixEntry(BaseModel):
         alias=Fields.SPEC_DECODING.value
     )
     runner: str
+    node_count: Optional[int] = Field(
+        default=None, alias=Fields.NODE_COUNT.value, gt=0, strict=True
+    )
     prefill: WorkerConfig
     decode: WorkerConfig
     conc: list[int]

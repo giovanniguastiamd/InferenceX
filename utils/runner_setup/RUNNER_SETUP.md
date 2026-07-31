@@ -180,6 +180,43 @@ self-hosted, Linux, X64, slurm, b200, b200-dsv4, cluster:b200-dgxc, b200-dgxc_00
 
 Labels can be edited later on the runners settings page without re-registering.
 
+### Static Slurm node-slot labels
+
+The optional node-slot scheduler limits how many GitHub jobs of one Slurm
+allocation size can enter a fleet at once. A job that needs three nodes adds
+`nodes:3` to `runs-on`. In a 12-runner pool, exactly `floor(12 / 3) = 4`
+runners receive that label; `nodes:2` is present on six runners and `nodes:1`
+is present on all twelve.
+
+Generate the label plan from the runner order already recorded in
+`configs/runners.yaml`:
+
+```bash
+python utils/runner_setup/plan_node_labels.py cluster:h200-dgxc
+```
+
+The plan assigns each `nodes:N` label to the first `floor(capacity / N)`
+runners in the configured list. The sets are deliberately nested toward the
+earliest runner names, matching the scheduler's deterministic runner order.
+Apply the emitted labels through the runner settings page or GitHub API, then
+set the repository variable `NODE_SLOT_SCHEDULER_ENABLED=true`. Until that
+variable is enabled, workflow `runs-on` expressions omit the node-slot label.
+The priority score also subtracts `0.001` per additional node, so otherwise
+equal jobs are ordered as one-node, two-node, three-node, and so on without
+overriding the existing business-priority signals.
+
+Multi-node matrix generation derives `node-count` from, in precedence order:
+
+1. checked-in srt-slurm recipe `resources`;
+2. explicit `PREFILL_NODES` and `DECODE_NODES` settings; or
+3. worker GPU footprints divided by the relevant hardware's GPUs per node.
+
+This is an admission-slot approximation, not weighted resource accounting.
+It caps a uniform workload correctly (for example, four simultaneous
+three-node jobs on 12 nodes), but a mixture of one-, two-, and three-node jobs
+can still request more than 12 nodes in aggregate. Slurm remains the final
+capacity authority and queues allocations that do not fit.
+
 ## Storage layout
 
 The login node (where the runners live) and the Slurm compute nodes (where benchmarks
