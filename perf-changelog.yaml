@@ -5359,5 +5359,5 @@
 - config-keys:
     - kimik2.5-fp4-b300-vllm
   description:
-    - "Kimi K2.5 NVFP4 B300 vLLM: v0.26.0 image, TP8 conc-1 only, TP4/DEP sweep, DEP gmu 0.85, tuning"
+    - "Kimi K2.5 NVFP4 B300 vLLM: nightly image, extend sweep space with TP/DEP arms, TP8 conc-1 only, DEP gmu 0.85"
   pr-link: https://github.com/SemiAnalysisAI/InferenceX/pull/2442
