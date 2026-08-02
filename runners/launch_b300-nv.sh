@@ -56,6 +56,8 @@ elif [[ $MODEL_PREFIX == "minimaxm3" && $PRECISION == "fp4" && $FRAMEWORK == "dy
 elif [[ $MODEL_PREFIX == "minimaxm3" && $PRECISION == "fp8" && $FRAMEWORK == "dynamo-vllm" ]]; then
     export MODEL_PATH="/data/models/MiniMax-M3-MXFP8"
     export SRT_SLURM_MODEL_PREFIX="MiniMaxAI/MiniMax-M3-MXFP8"
+elif [[ $MODEL_PREFIX == "kimik2.5" && $PRECISION == "fp4" ]]; then
+    export MODEL_PATH="/data/models/Kimi-K2.5-NVFP4"
 else
     echo "Unsupported model: $MODEL_PREFIX-$PRECISION. Supported models are: dsr1-fp4, dsr1-fp8, dsv4-fp4 with dynamo-vllm or dynamo-sglang, minimaxm2.5-fp4 with dynamo-vllm, minimaxm2.5-fp8 with dynamo-vllm, minimaxm3-fp4 with dynamo-vllm, minimaxm3-fp8 with dynamo-vllm"
     exit 1
