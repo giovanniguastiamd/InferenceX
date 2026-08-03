@@ -1522,7 +1522,7 @@ kimik2.5-fp4-b200-vllm:
       search-space:
       - { tp: 8, ep: 1, conc-start: 1, conc-end: 512 }
       - { tp: 4, ep: 1, conc-start: 1, conc-end: 512 }
-      - { tp: 8, ep: 8, dp-attn: true, conc-start: 128, conc-end: 512 }
+      - { tp: 8, ep: 8, dp-attn: true, conc-list: [512, 1024] }
 
 # NOTE: At the time of submission, https://docs.vllm.ai/projects/recipes/en/latest/moonshotai/Kimi-K2.5.html
 # does not have a B300-specific recipe, so this config reuses the existing
