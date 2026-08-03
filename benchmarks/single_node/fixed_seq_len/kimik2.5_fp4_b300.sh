@@ -78,7 +78,6 @@ vllm serve $MODEL_PATH --served-model-name $MODEL --host 0.0.0.0 --port $PORT \
 --kv-cache-dtype fp8 \
 --max-cudagraph-capture-size "$CONC" \
 --stream-interval 32 \
---attention-config '{"mla_prefill_backend":"FLASHINFER","use_prefill_query_quantization":true}' \
 --no-enable-prefix-caching \
 --trust-remote-code > $SERVER_LOG 2>&1 &
 
