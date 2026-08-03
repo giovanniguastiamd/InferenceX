@@ -80,6 +80,7 @@ vllm serve $MODEL_PATH --served-model-name $MODEL --host 0.0.0.0 --port $PORT \
 --stream-interval 32 \
 --attention-config '{"mla_prefill_backend":"FLASHINFER","use_prefill_query_quantization":true}' \
 --linear-backend flashinfer_cutlass \
+--max-num-batched-tokens 16384 \
 --no-enable-prefix-caching \
 --trust-remote-code > $SERVER_LOG 2>&1 &
 
