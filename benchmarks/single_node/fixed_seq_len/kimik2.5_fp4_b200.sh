@@ -69,6 +69,8 @@ vllm serve $MODEL --host 0.0.0.0 --port $PORT \
 --max-cudagraph-capture-size "$CONC" \
 --max-num-batched-tokens "$((ISL * 2 ))" \
 --stream-interval 32 \
+--attention-config '{"mla_prefill_backend":"FLASHINFER","use_prefill_query_quantization":true}' \
+--linear-backend flashinfer_cutlass \
 --no-enable-prefix-caching \
 --trust-remote-code > $SERVER_LOG 2>&1 &
 
