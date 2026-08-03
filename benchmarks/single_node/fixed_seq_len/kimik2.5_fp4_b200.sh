@@ -67,7 +67,7 @@ vllm serve $MODEL --host 0.0.0.0 --port $PORT \
 --compilation_config.pass_config.fuse_allreduce_rms true \
 --kv-cache-dtype fp8 \
 --max-cudagraph-capture-size "$((CONC * 2))" \
---max-num-batched-tokens "$((ISL * 2 ))" \
+--max-num-batched-tokens 16384 \
 --stream-interval 32 \
 --attention-config '{"mla_prefill_backend":"FLASHINFER","use_prefill_query_quantization":true}' \
 --linear-backend flashinfer_cutlass \
