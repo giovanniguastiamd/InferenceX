@@ -252,6 +252,58 @@ PY
 
 else
 
+    # ── Docker fallback: used when Slurm (salloc) is not available ───────────
+    if ! command -v salloc >/dev/null 2>&1; then
+        export HF_CACHE_LOCAL="${HOME}/.cache/huggingface"
+        export AIPERF_CACHE_LOCAL="${HOME}/.cache/aiperf-mmap"
+        mkdir -p "$HF_CACHE_LOCAL" "$AIPERF_CACHE_LOCAL"
+        export PORT_OFFSET=${RUNNER_NAME: -1}
+        export PORT=$(( 8888 + ${PORT_OFFSET:-0} ))
+        SPEC_SUFFIX=$([[ "$SPEC_DECODING" == "mtp" ]] && printf '_mtp' || printf '')
+        SCRIPT_BASE="${EXP_NAME%%_*}_${PRECISION}_mi355x"
+        SCRIPT_FW="benchmarks/single_node/${SCENARIO_SUBDIR:-fixed_seq_len/}${SCRIPT_BASE}_${FRAMEWORK}${SPEC_SUFFIX}.sh"
+        SCRIPT_FALLBACK="benchmarks/single_node/${SCENARIO_SUBDIR:-fixed_seq_len/}${SCRIPT_BASE}${SPEC_SUFFIX}.sh"
+        if [[ -f "$SCRIPT_FW" ]]; then
+            BENCHMARK_SCRIPT="$SCRIPT_FW"
+        else
+            BENCHMARK_SCRIPT="$SCRIPT_FALLBACK"
+        fi
+        set -x
+        docker pull "$IMAGE"
+        docker run --rm \
+            --privileged \
+            --network=host \
+            --ipc=host \
+            --user root \
+            -w /workspace \
+            -v "${GITHUB_WORKSPACE}:/workspace" \
+            -v "${HF_CACHE_LOCAL}:/root/.cache/huggingface" \
+            -v "${AIPERF_CACHE_LOCAL}:/aiperf_mmap_cache" \
+            -e MODEL -e MODEL_NAME -e PRECISION -e FRAMEWORK \
+            -e TP -e EP_SIZE -e DP_ATTENTION -e CONC \
+            -e KV_OFFLOADING -e KV_OFFLOAD_BACKEND -e KV_OFFLOAD_BACKEND_METADATA \
+            -e TOTAL_CPU_DRAM_GB -e DURATION \
+            -e RESULT_DIR -e SPEC_DECODING -e DISAGG \
+            -e SCENARIO_TYPE -e SCENARIO_SUBDIR -e IS_AGENTIC \
+            -e "RUN_EVAL=${RUN_EVAL:-false}" \
+            -e "EVAL_ONLY=${EVAL_ONLY:-false}" \
+            -e EVAL_LIMIT \
+            -e "AIPERF_EXPERIMENTAL_FAST=${AIPERF_EXPERIMENTAL_FAST:-0}" \
+            -e "AIPERF_FAILED_REQUEST_THRESHOLD=${AIPERF_FAILED_REQUEST_THRESHOLD:-0.10}" \
+            -e AIPERF_DATASET_MMAP_CACHE_DIR=/aiperf_mmap_cache \
+            -e HF_HOME=/root/.cache/huggingface \
+            -e WEKA_LOADER_OVERRIDE=hf \
+            -e PORT \
+            -e RUNNER_NAME \
+            -e RESULT_FILENAME \
+            -e PYTHONDONTWRITEBYTECODE=1 \
+            -e PYTHONPYCACHEPREFIX=/tmp/inferencex-pycache \
+            "$IMAGE" \
+            bash "$BENCHMARK_SCRIPT"
+        exit $?
+    fi
+    # ── End Docker fallback ──────────────────────────────────────────────────
+
     export HF_HUB_CACHE_MOUNT="/var/lib/hf-hub-cache/"
     export AIPERF_MMAP_CACHE_HOST_PATH="/it-share/aiperf-cache/"
     export PORT_OFFSET=${RUNNER_NAME: -1}
