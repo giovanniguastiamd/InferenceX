@@ -279,6 +279,8 @@ else
             -v "${GITHUB_WORKSPACE}:/workspace" \
             -v "${HF_CACHE_LOCAL}:/root/.cache/huggingface" \
             -v "${AIPERF_CACHE_LOCAL}:/aiperf_mmap_cache" \
+            ${MODEL_PATH:+-v "${MODEL_PATH}:${MODEL_PATH}"} \
+            -v "/mnt/hf_hub_cache:/mnt/hf_hub_cache" \
             -e MODEL -e MODEL_NAME -e PRECISION -e FRAMEWORK \
             -e TP -e EP_SIZE -e DP_ATTENTION -e CONC \
             -e KV_OFFLOADING -e KV_OFFLOAD_BACKEND -e KV_OFFLOAD_BACKEND_METADATA \
@@ -292,7 +294,8 @@ else
             -e "AIPERF_FAILED_REQUEST_THRESHOLD=${AIPERF_FAILED_REQUEST_THRESHOLD:-0.10}" \
             -e AIPERF_DATASET_MMAP_CACHE_DIR=/aiperf_mmap_cache \
             -e HF_HOME=/root/.cache/huggingface \
-            -e WEKA_LOADER_OVERRIDE=hf \
+            -e HF_HUB_CACHE \
+            ${MODEL_PATH:+-e MODEL_PATH} \
             -e PORT \
             -e RUNNER_NAME \
             -e RESULT_FILENAME \
