@@ -196,12 +196,9 @@ else
     CHUNKED_PREFILL_SIZE=32768
     export AGENTIC_WARMUP_GRACE_PERIOD=3600
 fi
-MAX_RUNNING_REQUESTS=$((1 * CONC))
+MAX_RUNNING_REQUESTS=$((2 * CONC))
 [ "$MAX_RUNNING_REQUESTS" -gt 256 ] && MAX_RUNNING_REQUESTS=256
-CUDA_GRAPH_MAX_BS=$MAX_RUNNING_REQUESTS
-# NOTE: with MTP num-steps=5 the draft+verify batch can momentarily exceed
-# MAX_RUNNING_REQUESTS; if cuda-graph misses ("graph capture miss") appear in
-# server.log under load, consider raising this to e.g. MAX_RUNNING_REQUESTS * 2.
+CUDA_GRAPH_MAX_BS=$(( MAX_RUNNING_REQUESTS < 64 ? MAX_RUNNING_REQUESTS : 64 ))
 
 if [ "${EVAL_ONLY:-false}" != "true" ]; then
     export SGLANG_SIMULATE_ACC_LEN=3.61
