@@ -268,19 +268,20 @@ else
         else
             BENCHMARK_SCRIPT="$SCRIPT_FALLBACK"
         fi
+        # Pre-create RESULT_DIR as the host user (gguasti) with world-writable
+        # permissions so that the container (running as root, NFS root_squash
+        # maps root→nobody) can still write results to the NFS share.
+        mkdir -p "${RESULT_DIR}"
+        chmod 777 "${RESULT_DIR}"
         set -x
         docker pull "$IMAGE"
         docker run --rm \
             --privileged \
             --network=host \
             --ipc=host \
-            --user "$(id -u):$(id -g)" \
-            --group-add "$(getent group render | cut -d: -f3)" \
-            --group-add "$(getent group video | cut -d: -f3)" \
             -w /workspace \
-            -e HOME=/tmp \
             -v "${GITHUB_WORKSPACE}:/workspace" \
-            -v "${HF_CACHE_LOCAL}:/tmp/hf-cache" \
+            -v "${HF_CACHE_LOCAL}:/root/.cache/huggingface" \
             -v "${AIPERF_CACHE_LOCAL}:/aiperf_mmap_cache" \
             ${MODEL_PATH:+-v "${MODEL_PATH}:${MODEL_PATH}"} \
             -v "/mnt/hf_hub_cache:/mnt/hf_hub_cache" \
@@ -296,7 +297,7 @@ else
             -e "AIPERF_EXPERIMENTAL_FAST=${AIPERF_EXPERIMENTAL_FAST:-0}" \
             -e "AIPERF_FAILED_REQUEST_THRESHOLD=${AIPERF_FAILED_REQUEST_THRESHOLD:-0.10}" \
             -e AIPERF_DATASET_MMAP_CACHE_DIR=/aiperf_mmap_cache \
-            -e HF_HOME=/tmp/hf-cache \
+            -e HF_HOME=/root/.cache/huggingface \
             -e HF_HUB_CACHE \
             ${MODEL_PATH:+-e MODEL_PATH} \
             -e PORT \
