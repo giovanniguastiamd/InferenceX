@@ -309,7 +309,13 @@ else
             -e PYTHONPYCACHEPREFIX=/tmp/inferencex-pycache \
             "$IMAGE" \
             bash "$BENCHMARK_SCRIPT"
-        exit $?
+        _docker_rc=$?
+        # Reclaim ownership of files created by root-in-container.
+        # NFS root_squash maps container-root → nobody (uid 65534); the runner
+        # user (gguasti) can't delete nobody-owned files on the next checkout.
+        sudo chown -R "$(id -u):$(id -g)" "${GITHUB_WORKSPACE}/results" 2>/dev/null || true
+        sudo chown "$(id -u):$(id -g)" "${GITHUB_WORKSPACE}"/*.json    2>/dev/null || true
+        exit $_docker_rc
     fi
     # ── End Docker fallback ──────────────────────────────────────────────────
 
