@@ -275,6 +275,8 @@ else
             --network=host \
             --ipc=host \
             --user "$(id -u):$(id -g)" \
+            --group-add "$(getent group render | cut -d: -f3)" \
+            --group-add "$(getent group video | cut -d: -f3)" \
             -w /workspace \
             -e HOME=/tmp \
             -v "${GITHUB_WORKSPACE}:/workspace" \
