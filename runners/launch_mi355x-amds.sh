@@ -268,11 +268,11 @@ else
         else
             BENCHMARK_SCRIPT="$SCRIPT_FALLBACK"
         fi
-        # Pre-create the results directory on the HOST as gguasti (the runner
-        # user) with world-writable permissions so that the container running
-        # as root (NFS root_squash maps root→nobody) can write to it.
-        # RESULT_DIR=/workspace/results is the in-container path; the host
-        # equivalent is ${GITHUB_WORKSPACE}/results.
+        # Make the workspace and results dir world-writable on the HOST so that
+        # the container running as root (NFS root_squash maps root→nobody) can
+        # write both the result JSON (written to /workspace directly) and the
+        # per-run results subdir (/workspace/results).
+        chmod 777 "${GITHUB_WORKSPACE}"
         mkdir -p "${GITHUB_WORKSPACE}/results"
         chmod 777 "${GITHUB_WORKSPACE}/results"
         set -x
