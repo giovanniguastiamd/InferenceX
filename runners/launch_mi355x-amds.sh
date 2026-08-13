@@ -274,7 +274,7 @@ else
             --privileged \
             --network=host \
             --ipc=host \
-            --user root \
+            --user "$(id -u):$(id -g)" \
             -w /workspace \
             -v "${GITHUB_WORKSPACE}:/workspace" \
             -v "${HF_CACHE_LOCAL}:/root/.cache/huggingface" \
