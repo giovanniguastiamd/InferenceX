@@ -256,6 +256,9 @@ else
     if ! command -v salloc >/dev/null 2>&1; then
         export HF_CACHE_LOCAL="${HOME}/.cache/huggingface"
         export AIPERF_CACHE_LOCAL="${HOME}/.cache/aiperf-mmap"
+        # Host-side path for the HF hub dataset cache (aiperf traces).
+        # Override via runner .env (e.g. HF_HUB_CACHE_HOST=/mnt/it_share/hf_hub_cache).
+        export HF_HUB_CACHE_HOST="${HF_HUB_CACHE_HOST:-/mnt/hf_hub_cache}"
         mkdir -p "$HF_CACHE_LOCAL" "$AIPERF_CACHE_LOCAL"
         export PORT_OFFSET=${RUNNER_NAME: -1}
         export PORT=$(( 8888 + ${PORT_OFFSET:-0} ))
@@ -286,7 +289,7 @@ else
             -v "${HF_CACHE_LOCAL}:/root/.cache/huggingface" \
             -v "${AIPERF_CACHE_LOCAL}:/aiperf_mmap_cache" \
             ${MODEL_PATH:+-v "${MODEL_PATH}:${MODEL_PATH}"} \
-            -v "/mnt/hf_hub_cache:/mnt/hf_hub_cache" \
+            -v "${HF_HUB_CACHE_HOST}:/mnt/hf_hub_cache" \
             -e MODEL -e MODEL_NAME -e PRECISION -e FRAMEWORK \
             -e TP -e EP_SIZE -e DP_ATTENTION -e CONC \
             -e KV_OFFLOADING -e KV_OFFLOAD_BACKEND -e KV_OFFLOAD_BACKEND_METADATA \
