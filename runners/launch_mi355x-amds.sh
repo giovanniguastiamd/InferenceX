@@ -253,7 +253,10 @@ PY
 else
 
     # ── Docker fallback: used when Slurm (salloc) is not available ───────────
-    if ! command -v salloc >/dev/null 2>&1; then
+    # Set FORCE_DOCKER=1 in the runner .env to bypass Slurm even if salloc is
+    # installed (e.g. machines where salloc is present but no cluster partition
+    # is configured).
+    if ! command -v salloc >/dev/null 2>&1 || [[ "${FORCE_DOCKER:-}" == "1" ]]; then
         export HF_CACHE_LOCAL="${HOME}/.cache/huggingface"
         export AIPERF_CACHE_LOCAL="${HOME}/.cache/aiperf-mmap"
         # Host-side path for the HF hub dataset cache (aiperf traces).
