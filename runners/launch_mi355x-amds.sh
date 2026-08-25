@@ -220,9 +220,8 @@ PY
                 echo "Staging agentic raw artifacts from $AGENTIC_SRC"
                 mkdir -p "$GITHUB_WORKSPACE/LOGS/agentic"
                 cp -r "$AGENTIC_SRC"/. "$GITHUB_WORKSPACE/LOGS/agentic/"
-                # Container artifacts arrive root-owned; chown/chmod so git clean
-                # and later jobs (possibly a different runner user) can remove LOGS/.
-                sudo -n chown -R "$(id -u):$(id -g)" "$GITHUB_WORKSPACE/LOGS" 2>/dev/null || true
+                # Container artifacts arrive root-owned (NFS root_squash).
+                # chmod world-writable directly; chown would require sudo.
                 chmod -R a+rwX "$GITHUB_WORKSPACE/LOGS" 2>/dev/null || true
                 ls -laR "$GITHUB_WORKSPACE/LOGS/agentic"
             else
@@ -316,11 +315,28 @@ else
             "$IMAGE" \
             bash "$BENCHMARK_SCRIPT"
         _docker_rc=$?
-        # Reclaim ownership of files created by root-in-container.
-        # NFS root_squash maps container-root → nobody (uid 65534); the runner
-        # user (gguasti) can't delete nobody-owned files on the next checkout.
-        sudo -n chown -R "$(id -u):$(id -g)" "${GITHUB_WORKSPACE}/results" 2>/dev/null || true
-        sudo -n chown "$(id -u):$(id -g)" "${GITHUB_WORKSPACE}"/*.json    2>/dev/null || true
+        # Reclaim files created by root-in-container (NFS root_squash maps
+        # container-root → nobody uid 65534; runner user can't delete them).
+        # We run a minimal container *as nobody* (uid 65534) to chmod the files
+        # world-writable so the runner can git-clean them on the next checkout.
+        # Using --user 65534 means nobody→nobody on the NFS, which has write
+        # access to its own files.  Fallback to $IMAGE if alpine is not cached.
+        _CLEANUP_IMAGE="alpine"
+        docker image inspect "$_CLEANUP_IMAGE" >/dev/null 2>&1 || \
+            docker pull "$_CLEANUP_IMAGE" >/dev/null 2>&1 || \
+            _CLEANUP_IMAGE="$IMAGE"
+        docker run --rm \
+            --user 65534:65534 \
+            -v "${GITHUB_WORKSPACE}:${GITHUB_WORKSPACE}" \
+            "$_CLEANUP_IMAGE" \
+            sh -c "chmod -R a+rwX \
+                    '${GITHUB_WORKSPACE}/results' \
+                    '${GITHUB_WORKSPACE}/LOGS' \
+                    2>/dev/null; \
+                   find '${GITHUB_WORKSPACE}' -maxdepth 1 -name '*.json' \
+                    -exec chmod a+rw {} + 2>/dev/null; \
+                   true" \
+            2>/dev/null || true
         exit $_docker_rc
     fi
     # ── End Docker fallback ──────────────────────────────────────────────────
