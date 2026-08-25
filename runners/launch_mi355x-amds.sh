@@ -185,8 +185,8 @@ PY
                 # Eval artifacts are created as root inside the container; sudo
                 # is required to overwrite any stale root-owned files in the
                 # workspace from prior runs on this runner.
-                if sudo cp "$eval_file" "$eval_dest"; then
-                    sudo chown "$(id -u):$(id -g)" "$eval_dest" 2>/dev/null || true
+                if sudo -n cp "$eval_file" "$eval_dest"; then
+                    sudo -n chown "$(id -u):$(id -g)" "$eval_dest" 2>/dev/null || true
                     echo "Copied eval artifact: $(basename "$eval_file")"
                 else
                     echo "ERROR: failed to copy eval artifact: $(basename "$eval_file")" >&2
@@ -222,7 +222,7 @@ PY
                 cp -r "$AGENTIC_SRC"/. "$GITHUB_WORKSPACE/LOGS/agentic/"
                 # Container artifacts arrive root-owned; chown/chmod so git clean
                 # and later jobs (possibly a different runner user) can remove LOGS/.
-                sudo chown -R "$(id -u):$(id -g)" "$GITHUB_WORKSPACE/LOGS" 2>/dev/null || true
+                sudo -n chown -R "$(id -u):$(id -g)" "$GITHUB_WORKSPACE/LOGS" 2>/dev/null || true
                 chmod -R a+rwX "$GITHUB_WORKSPACE/LOGS" 2>/dev/null || true
                 ls -laR "$GITHUB_WORKSPACE/LOGS/agentic"
             else
@@ -319,8 +319,8 @@ else
         # Reclaim ownership of files created by root-in-container.
         # NFS root_squash maps container-root → nobody (uid 65534); the runner
         # user (gguasti) can't delete nobody-owned files on the next checkout.
-        sudo chown -R "$(id -u):$(id -g)" "${GITHUB_WORKSPACE}/results" 2>/dev/null || true
-        sudo chown "$(id -u):$(id -g)" "${GITHUB_WORKSPACE}"/*.json    2>/dev/null || true
+        sudo -n chown -R "$(id -u):$(id -g)" "${GITHUB_WORKSPACE}/results" 2>/dev/null || true
+        sudo -n chown "$(id -u):$(id -g)" "${GITHUB_WORKSPACE}"/*.json    2>/dev/null || true
         exit $_docker_rc
     fi
     # ── End Docker fallback ──────────────────────────────────────────────────
