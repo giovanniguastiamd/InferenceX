@@ -1713,6 +1713,27 @@ glm5.2-fp4-mi355x-sglang-agentic-mtp-ep1:
     - dram-utilization: 0.8
       search-space:
       - { tp: 8, ep: 1, kv-offloading: none, conc-list: [4, 6, 8, 10], spec-decoding: mtp }
+# GLM-5.2 FP4 agentic-coding benchmark on MI355X via SGLang — bundle experiment:
+# TP=8/EP=1 + I-1 (chunk 16384) + I-3 (ROCM_QUICK_REDUCE_QUANTIZATION=INT8)
+#           + I-7 (SGLANG_USE_AITER_UNIFIED_ATTN=1).
+# Requires runner .env to export:
+#   CHUNKED_PREFILL_SIZE_OVERRIDE=16384
+#   ROCM_QUICK_REDUCE_QUANTIZATION=INT8
+#   SGLANG_USE_AITER_UNIFIED_ATTN=1
+# Baseline comparison: glm5.2-fp4-mi355x-sglang-agentic-mtp (TP=8/EP=8).
+glm5.2-fp4-mi355x-sglang-agentic-mtp-bundle:
+  image: lmsysorg/sglang-rocm:v0.5.16-rocm720-mi35x-20260728
+  model: amd/GLM-5.2-MXFP4
+  model-prefix: glm5.2
+  runner: cluster:mi355x-amds
+  precision: fp4
+  framework: sglang
+  multinode: false
+  scenarios:
+    agentic-coding:
+    - dram-utilization: 0.8
+      search-space:
+      - { tp: 8, ep: 1, kv-offloading: none, conc-list: [4, 6, 8, 10], spec-decoding: mtp }
 # GLM-5.2 FP4 agentic-coding benchmark on MI355X via ATOM with MTP speculative
 # decoding. TP4 uses LMCache DRAM offload; TP8 is GPU-resident with no KV offload.
 # Recipe is from PR https://github.com/ROCm/ATOM/pull/1877

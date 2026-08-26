@@ -53,6 +53,14 @@ ROUTER_LOG="$RESULT_DIR/router.log"
 mkdir -p "$RESULT_DIR"
  
 export PYTHONNOUSERSITE=1
+# Optional tuning knobs for bundle experiments (I-1, I-3, I-7).
+# Set these in the runner .env to activate; leave unset for baseline behaviour.
+#   ROCM_QUICK_REDUCE_QUANTIZATION=INT8  → I-3: NCCL all-reduce quantisation
+#   SGLANG_USE_AITER_UNIFIED_ATTN=1     → I-7: AITER unified-attention kernel
+#   CHUNKED_PREFILL_SIZE_OVERRIDE=16384 → I-1: smaller prefill chunk
+# All three are no-ops when unset, so the same script covers baseline and bundle.
+[[ -n "${ROCM_QUICK_REDUCE_QUANTIZATION:-}" ]]   && export ROCM_QUICK_REDUCE_QUANTIZATION
+[[ -n "${SGLANG_USE_AITER_UNIFIED_ATTN:-}" ]]    && export SGLANG_USE_AITER_UNIFIED_ATTN
 # Agentic warmup dispatches hundreds of large prompts at once; allow up to
 # 15 minutes of TCP progress before AIPerf declares a connection dead.
 export AIPERF_HTTP_TCP_USER_TIMEOUT=900000
@@ -195,6 +203,10 @@ elif [ "$CONC" -le 16 ]; then
 else
     CHUNKED_PREFILL_SIZE=32768
     export AGENTIC_WARMUP_GRACE_PERIOD=3600
+fi
+# I-1 bundle override: use CHUNKED_PREFILL_SIZE_OVERRIDE to try 16384.
+if [[ -n "${CHUNKED_PREFILL_SIZE_OVERRIDE:-}" ]]; then
+    CHUNKED_PREFILL_SIZE="$CHUNKED_PREFILL_SIZE_OVERRIDE"
 fi
 MAX_RUNNING_REQUESTS=$((2 * CONC))
 [ "$MAX_RUNNING_REQUESTS" -gt 256 ] && MAX_RUNNING_REQUESTS=256
