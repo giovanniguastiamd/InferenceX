@@ -263,6 +263,23 @@ jobs:
             done
           fi
 
+          # Fix root-owned files left by prior Docker runs on NFS mounts with
+          # root_squash. The benchmark container writes files as root inside
+          # the container; on the NFS-mounted host path those files land as
+          # root-owned and cannot be removed by the runner user. Running a
+          # tiny Alpine container with the host workspace mounted lets us
+          # chown everything back to the runner uid:gid before git clean runs.
+          if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+            ws="${GITHUB_WORKSPACE}"
+            if [ -d "${ws}" ]; then
+              echo "[Docker] Fixing root-owned files in workspace: ${ws}"
+              docker run --rm \
+                -v "${ws}:/workspace" \
+                alpine:3 \
+                chown -R "$(id -u):$(id -g)" /workspace 2>/dev/null || true
+            fi
+          fi
+
       - name: Repair stale git state (pre-run)
         run: |
           # Interrupted runs leave index.lock files and corrupt submodule git
