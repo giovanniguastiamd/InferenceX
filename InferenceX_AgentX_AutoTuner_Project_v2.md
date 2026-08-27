@@ -397,7 +397,7 @@ A c4 l'eliminazione dell'all-to-all MoE tra 8 EP ranks riduce l'ITL p50 di ~0.35
 **3. Gap residuo vs ATOM (-10% P90, -1ms ITL a c4) è strutturale a SGLang v0.5.16.**
 Cause non eliminabili con env var:
 - `ptpc_fp8`: quantizzazione FP8 delle attivazioni on-the-fly (ATOM engine, non portabile)
-- CUDA graph per-CONC espliciti: ATOM compila un grafo per ogni batch size possibile; SGLang usa `cuda-graph-max-bs` fisso
+- CUDA graph per-CONC espliciti: ATOM compila un grafo per ogni batch size possibile; SGLang usa `cuda-graph-max-bs` fisso → **in test con I-10**
 - KV FP8 già attivo in SGLang (`--kv-cache-dtype fp8_e4m3`): non è la differenza
 
 **4. Ottimum SGLang su v0.5.16: EP=1, CONC=4, P90≈110.**
@@ -506,6 +506,55 @@ La sintassi `${VAR:+-e "VAR=${VAR}"}` omette il flag se la var è vuota (no-op p
 | errors | 0 | 0 |
 
 **Conclusione:** nessun miglioramento rilevante (+2% ITL p50, dentro la variabilità). Il fallback torch per `fp8_mqa_logits` introduce overhead rispetto al kernel nativo v0.5.16. Run cancellato dopo c4.
+
+---
+
+## Bundle re-run I-1+I-3+I-7 (v0.5.16, env var fix)
+
+**Obiettivo:** ripetere il bundle experiment dopo aver corretto il bug di propagazione delle env var nel launcher. Il run precedente (32999605584) era un confronto baseline vs baseline.
+
+**Fix applicato:** `source .env` all'ingresso del Docker fallback + `-e "VAR=${VAR}"` con valore embedded per le tre bundle vars. Path `.env` corretto: `${GITHUB_WORKSPACE%/*/*/*}` (runner root, non `_work/`).
+
+**Run:** 33065762186 `bundle-rerun-v516-envfix` — in corso su `testgg-maxreq2x`, v0.5.16-rocm720, TP=8/EP=1, c4/c6/c8/c10.
+
+### Osservazioni live (c6, ~22:50 profiling, 373 req)
+
+| Metrica | Bundle re-run c6 (live) | Baseline EP=8 c6 | Bundle invalidato c6 |
+|---------|------------------------|-----------------|---------------------|
+| ITL p50 | **7ms** | 8.3ms | 7.98ms |
+| ITL p95 | 16ms | — | — |
+| intvty p50 | 134 tok/s/user | — | — |
+| prefix_cache_hit | 95.8% | — | — |
+| kv_usage | 0–15% | — | — |
+
+ITL p50=7ms stabile a regime — leggermente meglio della baseline EP=8 (8.3ms), in linea con EP=1 baseline (7.03ms). Atteso risultato P90 finale ~85-95 per c6.
+
+**Risultati finali:** da completare al termine del run.
+
+---
+
+## I-10 — CUDA graph per batch size espliciti (c4)
+
+**Motivazione:** con `--cuda-graph-max-bs N` SGLang compila un **unico grafo** per bs=N. Ogni decode step con batch size diverso da N esegue in modalità eager (più lento, più varianza sull'ITL). ATOM usa `--cudagraph-capture-sizes [1,2,4,8]` per compilare un grafo per ogni batch size possibile — zero graph miss.
+
+**Meccanismo:** anche con CONC=4 fisso, il batch size del decode varia continuamente tra 1 e MAX_RUNNING_REQUESTS (=8) a seconda di quante richieste sono in fase di decode simultaneamente. Catturare ogni dimensione elimina i fallback eager.
+
+**Implementazione:** `--cuda-graph-bs 1 2 3 4 5 6 7 8` (SGLang accetta lista space-separated, usata anche nei multi-node disaggregated). Attivato via `CUDA_GRAPH_BS_LIST_OVERRIDE` nel runner `.env`, solo per CONC=4; altri CONC usano `--cuda-graph-max-bs` invariato.
+
+**Config:** `glm5.2-fp4-mi355x-sglang-agentic-mtp-cgbs` — solo c4, TP=8/EP=1, v0.5.16.
+
+**Run:** 33076693271 `i10-cgbs-c4-pure` — in coda su `testgg-maxreq2x`.
+Runner `.env` per questo test (bundle vars rimosse per confronto pulito vs EP=1 baseline):
+```
+FORCE_DOCKER=1
+MODEL_PATH=/it-share/models/GLM-5.2-MXFP4
+HF_HUB_CACHE_HOST=/mnt/hf_hub_cache
+CUDA_GRAPH_BS_LIST_OVERRIDE=1 2 3 4 5 6 7 8
+```
+
+**Attesa:** riduzione ITL p95 (meno spike da eager execution) e potenziale miglioramento ITL p50 se i decode step a bs<8 erano frequentemente eager. Se l'effetto è nullo, significa che SGLang già gestisce i batch size intermedi in modo efficiente (es. padding al grafo più vicino).
+
+**Risultati:** da completare al termine del run.
 
 ---
 
