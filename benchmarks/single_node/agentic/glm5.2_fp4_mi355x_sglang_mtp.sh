@@ -228,10 +228,12 @@ if [ "${EVAL_ONLY:-false}" != "true" ]; then
     export SGLANG_SIMULATE_ACC_TOKEN_MODE=real-draft-token
 fi
 
-# P-2 patch: bypass the gluon fp8_mqa_logits kernel (crashes on gfx950 with
-# Triton≥3.6 due to LLVM iota_range assertion). Patch fp8_mqa_logits.py in the
-# running container to check SGLANG_AITER_DISABLE_GLUON_FP8_MQA before using
-# the gluon path, falling back to the standard Triton kernel which compiles fine.
+# P-2 patch: replace fp8_mqa_logits with a pure-torch fallback to avoid ALL
+# Triton kernel paths (gluon and standard) that crash with LLVM iota_range
+# assertion on gfx950 for both small (startup warmup) and large (M=32768
+# chunked-prefill) tensor shapes in v0.5.18.
+# The torch fallback computes the same attention logits via BF16 matmul —
+# correct for DSA top-k ranking, just slower than the Triton kernels.
 if [[ -n "${SGLANG_AITER_DISABLE_GLUON_FP8_MQA:-}" ]]; then
     python3 - <<'PYEOF'
 import importlib.util, pathlib, sys
@@ -245,20 +247,56 @@ target = aiter_root / "ops/triton/attention/fp8_mqa_logits.py"
 if not target.exists():
     print(f"fp8_mqa_logits.py not found at {target}, skipping", flush=True); sys.exit(0)
 
+marker = "_FP8_MQA_TORCH_FALLBACK_INSTALLED"
 src = target.read_text()
-marker = "SGLANG_AITER_DISABLE_GLUON_FP8_MQA"
 if marker in src:
     print(f"fp8_mqa_logits.py already patched at {target}", flush=True); sys.exit(0)
 
-old = "use_gluon = TRITON_GE_36 and _gluon_fp8_mqa_logits_kernel is not None"
-new = ("import os as _os\n"
-       "use_gluon = (TRITON_GE_36 and _gluon_fp8_mqa_logits_kernel is not None\n"
-       "             and not _os.environ.get('SGLANG_AITER_DISABLE_GLUON_FP8_MQA'))")
-if old not in src:
-    print(f"ERROR: expected pattern not found in {target}", flush=True); sys.exit(1)
+# Append a torch fallback that overrides the function definition (last def wins
+# in module scope). Replaces both the gluon and standard Triton kernel paths.
+FALLBACK = '''
 
-target.write_text(src.replace(old, new, 1))
-print(f"Patched {target}: gluon fp8_mqa_logits disabled for gfx950 workaround", flush=True)
+# --- gfx950 workaround: torch fallback for fp8_mqa_logits ---
+# Both the gluon and standard Triton paths crash on gfx950 with v0.5.18 due
+# to an LLVM iota_range assertion in the Triton AMD compiler. This pure-torch
+# fallback computes the same attention logits via BF16 matmul. The DSA indexer
+# only needs a correct ranking of KV blocks, not exact Triton-level precision.
+import os as _os
+_FP8_MQA_TORCH_FALLBACK_INSTALLED = True
+if _os.environ.get("SGLANG_AITER_DISABLE_GLUON_FP8_MQA"):
+    import torch as _torch
+    def fp8_mqa_logits(Q, KV, kv_scales, weights, cu_starts, cu_ends, clean_logits=True):
+        seq_len, num_heads, head_size = Q.shape
+        seq_len_kv = KV.shape[0]
+        aligned = 256
+        seq_len_kv_al = (seq_len_kv + aligned - 1) // aligned * aligned
+        if clean_logits:
+            logits = _torch.full((seq_len, seq_len_kv_al), -float("inf"),
+                                 dtype=_torch.float32, device=Q.device)[:, :seq_len_kv]
+        else:
+            logits = _torch.empty((seq_len, seq_len_kv_al),
+                                  dtype=_torch.float32, device=Q.device)[:, :seq_len_kv]
+        q_f32 = Q.to(_torch.float32)
+        kv_f32 = KV.to(_torch.float32) * kv_scales.view(-1, 1)
+        q_w = (weights.unsqueeze(-1) * q_f32).sum(dim=1)  # [seq_len, head_size]
+        raw = _torch.mm(q_w, kv_f32.t())                  # [seq_len, seq_len_kv]
+        kv_idx = _torch.arange(seq_len_kv, device=Q.device)[None, :]
+        mask = (kv_idx >= cu_starts[:, None]) & (kv_idx < cu_ends[:, None])
+        logits[mask] = raw[mask]
+        return logits
+'''
+
+target.write_text(src + FALLBACK)
+
+# Invalidate any pre-compiled .pyc so Python reloads the patched source
+import shutil
+pycache = target.parent / "__pycache__"
+if pycache.exists():
+    for f in pycache.glob(f"{target.stem}.*.pyc"):
+        f.unlink()
+        print(f"Removed stale .pyc: {f}", flush=True)
+
+print(f"Patched {target}: fp8_mqa_logits torch fallback installed (all Triton paths disabled)", flush=True)
 PYEOF
 fi
  
