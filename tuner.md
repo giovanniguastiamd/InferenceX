@@ -369,6 +369,7 @@ Colonne riferimento: CONC=10 per TP=4 (throughput arm); CONC=4/6 per TP=8 (inter
 | **Bundle re-run c4** ✓ | 4 | **6.96 ms** | **9.18 ms** | **109.0** (≈EP=1, vars ok) | — | — |
 | **Bundle re-run c6** ✓ | 6 | **8.03 ms** | **12.05 ms** | **83.0** (≈EP=1, vars ok) | — | — |
 | **Bundle re-run c10** ✓ | 10 | **9.34 ms** | **14.73 ms** | **67.9** (≈EP=1, vars ok) | — | — |
+| **HiCache c12** ✓ | 12 | **12.6 ms** | **21.8 ms** | **45.8** (-12% vs baseline) | **102.2** (+12%) | 464 ms |
 | I-9: KV FP8 | 4-8 | — | — | — | — | — |
 | ~~I-6: TP=2+DCP=4~~ | — | deprioritizzato | | | | |
 
@@ -617,11 +618,21 @@ HICACHE_WRITE_POLICY=write_through_selective
 
 **Config:** `glm5.2-fp4-mi355x-sglang-agentic-mtp-hicache-c12` — TP=4/EP=4/c12, v0.5.16. Stesso `.env` di H-1+H-2.
 
-**Run:** 33097110633 `h1h2-hicache-c12` — in coda.
+**Run:** 33097110633 `h1h2-hicache-c12` — completato (3627s, 1588 req).
 
-**Attesa:** `cpu_kv_usage` sale verso 70-75%, `tput_out` > 445/s → >111 tok/s/GPU. Se ITL p50 supera 20ms, c12 è oltre C\* per questo arm.
+**Risultati finali:**
 
-**Risultati:** da completare.
+| Metrica | c12 HiCache | c10 HiCache | Baseline c10 | Δ vs baseline |
+|---------|-------------|-------------|--------------|---------------|
+| tok/s/GPU | **102.2** | 91.4 | 91.0 | **+12%** ▲ |
+| ITL p50 | 12.6 ms | 12.2 ms | 11.9 ms | +6% |
+| ITL p90 | 21.8 ms | 19.7 ms | 19.4 ms | +12% |
+| P90 intvty | 45.8 | 50.9 | ~52 | -12% |
+| TTFT p50 | 464 ms | 472 ms | 509 ms | -9% |
+| cpu_kv_usage | 100% | 100% | 100% | = |
+| gpu_kv_usage | 60% | 67% | — | |
+
+**Verdetto: c12 è un punto Pareto diverso.** +12% throughput in cambio di -12% P90 interattività (45.8 vs 52 tok/s/user). Il cpu_kv_usage è ancora al 100% — la cache CPU satura indipendentemente dal CONC. Il throughput aumenta perché il batch decode medio è più grande (più richieste in volo), non perché migliori la cache. C\* per questo arm è tra c10 e c12: c10 è il sweet spot interattività, c12 è il sweet spot throughput.
 
 ---
 
