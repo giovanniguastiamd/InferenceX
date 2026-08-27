@@ -366,6 +366,9 @@ Colonne riferimento: CONC=10 per TP=4 (throughput arm); CONC=4/6 per TP=8 (inter
 | **Bundle I-1+I-3+I-7/c8** ✓ | 8 | **8.37 ms** | **12.35 ms** | **81.0** (≈EP=1) | 40.9 | — |
 | **Bundle I-1+I-3+I-7/c10** ✓ | 10 | **9.34 ms** | **14.54 ms** | **68.8** (≈EP=1) | 48.4 | — |
 | **Bundle I-1+I-3+I-7/c6** ✓ | 6 | **7.98 ms** | **12.15 ms** | **82.3** (≈EP=1) | — | — |
+| **Bundle re-run c4** ✓ | 4 | **6.96 ms** | **9.18 ms** | **109.0** (≈EP=1, vars ok) | — | — |
+| **Bundle re-run c6** ✓ | 6 | **8.03 ms** | **12.05 ms** | **83.0** (≈EP=1, vars ok) | — | — |
+| **Bundle re-run c10** ✓ | 10 | **9.34 ms** | **14.73 ms** | **67.9** (≈EP=1, vars ok) | — | — |
 | I-9: KV FP8 | 4-8 | — | — | — | — | — |
 | ~~I-6: TP=2+DCP=4~~ | — | deprioritizzato | | | | |
 
@@ -529,21 +532,21 @@ La sintassi `${VAR:+-e "VAR=${VAR}"}` omette il flag se la var è vuota (no-op p
 
 **Fix applicato:** `source .env` all'ingresso del Docker fallback + `-e "VAR=${VAR}"` con valore embedded per le tre bundle vars. Path `.env` corretto: `${GITHUB_WORKSPACE%/*/*/*}` (runner root, non `_work/`).
 
-**Run:** 33065762186 `bundle-rerun-v516-envfix` — in corso su `testgg-maxreq2x`, v0.5.16-rocm720, TP=8/EP=1, c4/c6/c8/c10.
+**Run:** 33065762186 `bundle-rerun-v516-envfix` — completato, v0.5.16-rocm720, TP=8/EP=1. c8 perso per disconnessione runner durante il run.
 
-### Osservazioni live (c6, ~22:50 profiling, 373 req)
+### Risultati finali
 
-| Metrica | Bundle re-run c6 (live) | Baseline EP=8 c6 | Bundle invalidato c6 |
-|---------|------------------------|-----------------|---------------------|
-| ITL p50 | **7ms** | 8.3ms | 7.98ms |
-| ITL p95 | 16ms | — | — |
-| intvty p50 | 134 tok/s/user | — | — |
-| prefix_cache_hit | 95.8% | — | — |
-| kv_usage | 0–15% | — | — |
+| Config | CONC | ITL p50 | ITL p90 | P90 intvty | Δ vs EP=1 baseline |
+|--------|------|---------|---------|------------|--------------------|
+| I-8 EP=1 c4 (ref) | 4 | 6.95ms | 9.05ms | 110.5 | — |
+| **Bundle re-run c4** ✓ | 4 | **6.96ms** | **9.18ms** | **109.0** | -1.4% |
+| I-8 EP=1 c6 (ref) | 6 | 7.87ms | 12.15ms | 82.3 | — |
+| **Bundle re-run c6** ✓ | 6 | **8.03ms** | **12.05ms** | **83.0** | +0.8% |
+| I-8 EP=1 c10 (ref) | 10 | 9.27ms | 14.25ms | 70.2 | — |
+| **Bundle re-run c10** ✓ | 10 | **9.34ms** | **14.73ms** | **67.9** | -3.3% |
+| Bundle c8 | 8 | — | — | — | *(perso: disconnessione runner)* |
 
-ITL p50=7ms stabile a regime — leggermente meglio della baseline EP=8 (8.3ms), in linea con EP=1 baseline (7.03ms). Atteso risultato P90 finale ~85-95 per c6.
-
-**Risultati finali:** da completare al termine del run.
+**Verdetto: I-1+I-3+I-7 completamente neutri a tutti i CONC testati.** Tutte le variazioni sono dentro la variabilità run-to-run (±3%). Le env var erano arrivate correttamente nel container questa volta — la neutralità è reale, non un artefatto del bug di propagazione.
 
 ---
 
