@@ -61,10 +61,16 @@ export PYTHONNOUSERSITE=1
 # All three are no-ops when unset, so the same script covers baseline and bundle.
 [[ -n "${ROCM_QUICK_REDUCE_QUANTIZATION:-}" ]]      && export ROCM_QUICK_REDUCE_QUANTIZATION
 [[ -n "${SGLANG_USE_AITER_UNIFIED_ATTN:-}" ]]       && export SGLANG_USE_AITER_UNIFIED_ATTN
-# P-2 workaround: SGLANG_DSA_HIP_DISABLE_PRESHUFFLE=1 changes block-table layout
-# (page_size=64 preshuffle → page_size=1 legacy) to avoid the Triton AMD compiler
-# iota_range assertion in fp8_mqa_logits on gfx950 (v0.5.18 regression).
-[[ -n "${SGLANG_DSA_HIP_DISABLE_PRESHUFFLE:-}" ]]   && export SGLANG_DSA_HIP_DISABLE_PRESHUFFLE
+# P-2 workarounds for Triton AMD iota_range assertion in fp8_mqa_logits on
+# gfx950 (v0.5.18 regression). Two independent knobs — set either in runner .env:
+#   SGLANG_DSA_HIP_DISABLE_PRESHUFFLE=1  → changes block-table layout
+#                                           (page_size=64 → page_size=1 legacy)
+#   SGLANG_AITER_DISABLE_GLUON_FP8_MQA=1 → skips the gluon Triton kernel path
+#                                           (root cause: gluon kernel crashes LLVM
+#                                           iota_range on gfx950 with Triton≥3.6;
+#                                           falls back to standard Triton kernel)
+[[ -n "${SGLANG_DSA_HIP_DISABLE_PRESHUFFLE:-}" ]]      && export SGLANG_DSA_HIP_DISABLE_PRESHUFFLE
+[[ -n "${SGLANG_AITER_DISABLE_GLUON_FP8_MQA:-}" ]]    && export SGLANG_AITER_DISABLE_GLUON_FP8_MQA
 # Agentic warmup dispatches hundreds of large prompts at once; allow up to
 # 15 minutes of TCP progress before AIPerf declares a connection dead.
 export AIPERF_HTTP_TCP_USER_TIMEOUT=900000
@@ -220,6 +226,40 @@ if [ "${EVAL_ONLY:-false}" != "true" ]; then
     export SGLANG_SIMULATE_ACC_LEN=3.61
     export SGLANG_SIMULATE_ACC_METHOD=match-expected
     export SGLANG_SIMULATE_ACC_TOKEN_MODE=real-draft-token
+fi
+
+# P-2 patch: bypass the gluon fp8_mqa_logits kernel (crashes on gfx950 with
+# Triton≥3.6 due to LLVM iota_range assertion). Patch fp8_mqa_logits.py in the
+# running container to check SGLANG_AITER_DISABLE_GLUON_FP8_MQA before using
+# the gluon path, falling back to the standard Triton kernel which compiles fine.
+if [[ -n "${SGLANG_AITER_DISABLE_GLUON_FP8_MQA:-}" ]]; then
+    python3 - <<'PYEOF'
+import importlib.util, pathlib, sys
+
+spec = importlib.util.find_spec("aiter")
+if spec is None:
+    print("aiter not found, skipping fp8_mqa_logits patch", flush=True); sys.exit(0)
+
+aiter_root = pathlib.Path(spec.submodule_search_locations[0])
+target = aiter_root / "ops/triton/attention/fp8_mqa_logits.py"
+if not target.exists():
+    print(f"fp8_mqa_logits.py not found at {target}, skipping", flush=True); sys.exit(0)
+
+src = target.read_text()
+marker = "SGLANG_AITER_DISABLE_GLUON_FP8_MQA"
+if marker in src:
+    print(f"fp8_mqa_logits.py already patched at {target}", flush=True); sys.exit(0)
+
+old = "use_gluon = TRITON_GE_36 and _gluon_fp8_mqa_logits_kernel is not None"
+new = ("import os as _os\n"
+       "use_gluon = (TRITON_GE_36 and _gluon_fp8_mqa_logits_kernel is not None\n"
+       "             and not _os.environ.get('SGLANG_AITER_DISABLE_GLUON_FP8_MQA'))")
+if old not in src:
+    print(f"ERROR: expected pattern not found in {target}", flush=True); sys.exit(1)
+
+target.write_text(src.replace(old, new, 1))
+print(f"Patched {target}: gluon fp8_mqa_logits disabled for gfx950 workaround", flush=True)
+PYEOF
 fi
  
 SGLANG_CMD=(
