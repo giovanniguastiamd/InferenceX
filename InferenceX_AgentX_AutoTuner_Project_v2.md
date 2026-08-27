@@ -445,6 +445,70 @@ C\* (punto di knee) rimane tra c8 e c10 per entrambe le config. EP=1 è preferib
 
 ---
 
+## P-2 — Upgrade SGLang v0.5.18-rocm724 (gfx950)
+
+**Obiettivo:** verificare se v0.5.18 + ROCm 7.2.4 porta miglioramenti su MI355X rispetto alla baseline v0.5.16-rocm720.
+
+**Esito: abbandonato** — nessun guadagno a c4, overhead aggiuntivo dal fallback torch.
+
+### Problema: crash `fp8_mqa_logits` su gfx950
+
+**Sintomo:** il server sglang crasha durante il warmup con:
+```
+AssertionError: Begin <= End  (LLVM sequence.h:275, iota_range)
+```
+proveniente da `aiter/ops/triton/attention/fp8_mqa_logits.py` durante la compilazione JIT del kernel Triton per gfx950.
+
+**Causa:** il kernel `fp8_mqa_logits` in aiter (integrato in ROCm 7.2.4) ha due path:
+- **Gluon path** (gfx950-native): fallisce con LLVM `iota_range` assertion durante JIT
+- **Triton standard path**: fallisce ugualmente con la stessa assertion
+
+Entrambi i path sono incompatibili con il compiler gfx950 in questa versione di ROCm.
+
+**Soluzione applicata:** fallback torch puro, sostituisce la funzione `fp8_mqa_logits` con matmul BF16 per-sequenza. Implementazione in `benchmarks/single_node/agentic/glm5.2_fp4_mi355x_sglang_mtp.sh` — patch applicata in-container al momento del run (riscrive il file `.py` nell'immagine Docker). Preservata nel branch `testgg-v518-p2`.
+
+**Iterazioni necessarie (9 run falliti):**
+1. Patch condizionale a env var `SGLANG_AITER_DISABLE_GLUON_FP8_MQA` — env var non arrivava in Docker
+2. Scoperta che il runner GH Actions **non esporta il `.env` nel subprocess** → `-e VAR` senza valore = stringa vuota
+3. Multipli tentativi di forwarding env var (tutti falliti per lo stesso motivo)
+4. Patch incondizionale → patch applicata, ma OOM: allocazione `[seq_len × total_kv_aligned]` float32 = 2.72 GiB con 90k KV tokens
+5. Rewrite con loop per-sequenza (`torch.mv`) → OOM risolto, server funzionante
+
+### Problema: env var runner `.env` non propagate a Docker
+
+**Impatto:** invalidati anche i run del bundle I-1+I-3+I-7 (run 32999605584) — le vars `CHUNKED_PREFILL_SIZE_OVERRIDE`, `ROCM_QUICK_REDUCE_QUANTIZATION`, `SGLANG_USE_AITER_UNIFIED_ATTN` non sono mai arrivate nel container → confronto baseline vs baseline.
+
+**Root cause:** il GH Actions runner carica `.env` nel proprio processo ma **non lo esporta nell'ambiente del subprocess** (lo script bash del job). `docker run -e VAR` senza `=value` propaga una stringa vuota se VAR non è nell'env del subprocess.
+
+**Fix applicato in `runners/launch_mi355x-amds.sh`:**
+```bash
+# Carica .env esplicitamente all'ingresso del Docker fallback
+_RUNNER_ENV="${GITHUB_WORKSPACE%/*/*/*}/.env"   # runner root, non _work
+if [[ -f "$_RUNNER_ENV" ]]; then
+    set -a; source "$_RUNNER_ENV"; set +a
+fi
+```
+Poi nelle flag `-e` del `docker run`:
+```bash
+${CHUNKED_PREFILL_SIZE_OVERRIDE:+-e "CHUNKED_PREFILL_SIZE_OVERRIDE=${CHUNKED_PREFILL_SIZE_OVERRIDE}"}
+```
+La sintassi `${VAR:+-e "VAR=${VAR}"}` omette il flag se la var è vuota (no-op per run baseline), lo include con valore embedded se settata.
+
+**Path .env:** `${GITHUB_WORKSPACE%/*/*/*}` — rimuove le ultime 3 componenti (`/_work/<repo>/<repo>`) per arrivare alla runner root. `%/*/*` era sbagliato (puntava a `_work/`).
+
+### Risultati P-2 (c4 unico CONC completato prima di cancellazione)
+
+| Metrica | v0.5.18 + fallback torch | v0.5.16 EP=1 baseline |
+|---------|--------------------------|----------------------|
+| ITL p50 | 7.18 ms | 7.03 ms |
+| ITL p90 | 37.7 ms | — |
+| intvty p50 | 139.2 tok/s/user | ~110 (P90) |
+| errors | 0 | 0 |
+
+**Conclusione:** nessun miglioramento rilevante (+2% ITL p50, dentro la variabilità). Il fallback torch per `fp8_mqa_logits` introduce overhead rispetto al kernel nativo v0.5.16. Run cancellato dopo c4.
+
+---
+
 ## Fasi 2-5 — Dettaglio esperimenti bassa priorità
 
 ### HiCache tuning (TP=4, regime CONC ≥ 10)
