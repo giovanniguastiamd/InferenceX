@@ -260,8 +260,8 @@ else
     # are available in this shell process.  The GH Actions runner reads .env
     # into its own process but does not export every variable into the subprocess
     # environment, so we source it explicitly here.
-    # .env lives two levels above GITHUB_WORKSPACE (_work/<repo>/<repo> → runner root).
-    _RUNNER_ENV="${GITHUB_WORKSPACE%/*/*}/.env"
+    # .env lives three levels above GITHUB_WORKSPACE (_work/<repo>/<repo> → runner root).
+    _RUNNER_ENV="${GITHUB_WORKSPACE%/*/*/*}/.env"
     if [[ -f "$_RUNNER_ENV" ]]; then
         set -a
         # shellcheck disable=SC1090
