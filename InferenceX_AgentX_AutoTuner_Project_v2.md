@@ -365,7 +365,7 @@ Colonne riferimento: CONC=10 per TP=4 (throughput arm); CONC=4/6 per TP=8 (inter
 | **Bundle I-1+I-3+I-7/c4** ✓ | 4 | **7.03 ms** | **9.06 ms** | **110.4** (≈EP=1, +5% vs baseline) | 23.9 | — |
 | **Bundle I-1+I-3+I-7/c8** ✓ | 8 | **8.37 ms** | **12.35 ms** | **81.0** (≈EP=1) | 40.9 | — |
 | **Bundle I-1+I-3+I-7/c10** ✓ | 10 | **9.34 ms** | **14.54 ms** | **68.8** (≈EP=1) | 48.4 | — |
-| **Bundle I-1+I-3+I-7/c6** ✓ | 6 | *(atteso ~7.9ms)* | — | *(atteso ~82)* | — | — |
+| **Bundle I-1+I-3+I-7/c6** ✓ | 6 | **7.98 ms** | **12.15 ms** | **82.3** (≈EP=1) | — | — |
 | I-9: KV FP8 | 4-8 | — | — | — | — | — |
 | ~~I-6: TP=2+DCP=4~~ | — | deprioritizzato | | | | |
 

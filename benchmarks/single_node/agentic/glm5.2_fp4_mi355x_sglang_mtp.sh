@@ -59,18 +59,8 @@ export PYTHONNOUSERSITE=1
 #   SGLANG_USE_AITER_UNIFIED_ATTN=1     → I-7: AITER unified-attention kernel
 #   CHUNKED_PREFILL_SIZE_OVERRIDE=16384 → I-1: smaller prefill chunk
 # All three are no-ops when unset, so the same script covers baseline and bundle.
-[[ -n "${ROCM_QUICK_REDUCE_QUANTIZATION:-}" ]]      && export ROCM_QUICK_REDUCE_QUANTIZATION
-[[ -n "${SGLANG_USE_AITER_UNIFIED_ATTN:-}" ]]       && export SGLANG_USE_AITER_UNIFIED_ATTN
-# P-2 workarounds for Triton AMD iota_range assertion in fp8_mqa_logits on
-# gfx950 (v0.5.18 regression). Two independent knobs — set either in runner .env:
-#   SGLANG_DSA_HIP_DISABLE_PRESHUFFLE=1  → changes block-table layout
-#                                           (page_size=64 → page_size=1 legacy)
-#   SGLANG_AITER_DISABLE_GLUON_FP8_MQA=1 → skips the gluon Triton kernel path
-#                                           (root cause: gluon kernel crashes LLVM
-#                                           iota_range on gfx950 with Triton≥3.6;
-#                                           falls back to standard Triton kernel)
-[[ -n "${SGLANG_DSA_HIP_DISABLE_PRESHUFFLE:-}" ]]      && export SGLANG_DSA_HIP_DISABLE_PRESHUFFLE
-[[ -n "${SGLANG_AITER_DISABLE_GLUON_FP8_MQA:-}" ]]    && export SGLANG_AITER_DISABLE_GLUON_FP8_MQA
+[[ -n "${ROCM_QUICK_REDUCE_QUANTIZATION:-}" ]]   && export ROCM_QUICK_REDUCE_QUANTIZATION
+[[ -n "${SGLANG_USE_AITER_UNIFIED_ATTN:-}" ]]    && export SGLANG_USE_AITER_UNIFIED_ATTN
 # Agentic warmup dispatches hundreds of large prompts at once; allow up to
 # 15 minutes of TCP progress before AIPerf declares a connection dead.
 export AIPERF_HTTP_TCP_USER_TIMEOUT=900000
@@ -227,70 +217,6 @@ if [ "${EVAL_ONLY:-false}" != "true" ]; then
     export SGLANG_SIMULATE_ACC_METHOD=match-expected
     export SGLANG_SIMULATE_ACC_TOKEN_MODE=real-draft-token
 fi
-
-# P-2 patch: replace fp8_mqa_logits with a pure-torch fallback to avoid ALL
-# Triton kernel paths (gluon and standard) that crash with LLVM iota_range
-# assertion on gfx950 for both small (startup warmup) and large (M=32768
-# chunked-prefill) tensor shapes in v0.5.18.
-# The torch fallback computes the same attention logits via BF16 matmul —
-# correct for DSA top-k ranking, just slower than the Triton kernels.
-# P-2 patch: unconditionally replace fp8_mqa_logits with a pure-torch fallback.
-# Both gluon and standard Triton paths crash on gfx950/v0.5.18 with LLVM
-# iota_range assertion. No env var guard — always applied when this script runs.
-python3 - <<'PYEOF'
-import importlib.util, pathlib, sys
-
-spec = importlib.util.find_spec("aiter")
-if spec is None:
-    print("aiter not found, skipping fp8_mqa_logits patch", flush=True); sys.exit(0)
-
-aiter_root = pathlib.Path(spec.submodule_search_locations[0])
-target = aiter_root / "ops/triton/attention/fp8_mqa_logits.py"
-if not target.exists():
-    print(f"fp8_mqa_logits.py not found at {target}, skipping", flush=True); sys.exit(0)
-
-marker = "_FP8_MQA_TORCH_FALLBACK_INSTALLED"
-src = target.read_text()
-if marker in src:
-    print(f"fp8_mqa_logits.py already patched at {target}", flush=True); sys.exit(0)
-
-FALLBACK = '''
-
-# --- gfx950 workaround: unconditional torch fallback for fp8_mqa_logits ---
-# Both gluon and standard Triton paths crash on gfx950 with v0.5.18-rocm724
-# due to an LLVM iota_range assertion. This fallback processes each sequence
-# independently to avoid allocating a full [batch x total_kv] matrix (OOM).
-import torch as _torch
-_FP8_MQA_TORCH_FALLBACK_INSTALLED = True
-
-def fp8_mqa_logits(Q, KV, kv_scales, weights, cu_starts, cu_ends, clean_logits=True):
-    seq_len, num_heads, head_size = Q.shape
-    seq_len_kv = KV.shape[0]
-    aligned = 256
-    seq_len_kv_al = (seq_len_kv + aligned - 1) // aligned * aligned
-    logits = _torch.full((seq_len, seq_len_kv_al), -float("inf"),
-                         dtype=_torch.float32, device=Q.device)
-    kv_f32 = KV.to(_torch.float32) * kv_scales.view(-1, 1)  # [seq_len_kv, head_size]
-    q_f32 = Q.to(_torch.float32)                             # [seq_len, num_heads, head_size]
-    q_w = (weights.unsqueeze(-1) * q_f32).sum(dim=1)        # [seq_len, head_size]
-    for i in range(seq_len):
-        s = int(cu_starts[i].item())
-        e = int(cu_ends[i].item())
-        if e > s:
-            logits[i, s:e] = _torch.mv(kv_f32[s:e], q_w[i])
-    return logits[:, :seq_len_kv]
-'''
-
-target.write_text(src + FALLBACK)
-
-pycache = target.parent / "__pycache__"
-if pycache.exists():
-    for f in pycache.glob(f"{target.stem}.*.pyc"):
-        f.unlink()
-        print(f"Removed stale .pyc: {f}", flush=True)
-
-print(f"Patched {target}: fp8_mqa_logits unconditional torch fallback installed", flush=True)
-PYEOF
  
 SGLANG_CMD=(
     python3 -m sglang.launch_server

@@ -255,21 +255,14 @@ else
     # Set FORCE_DOCKER=1 in the runner .env to bypass Slurm even if salloc is
     # installed (e.g. machines where salloc is present but no cluster partition
     # is configured).
-
-    # Load runner .env so variables set there (e.g. FORCE_DOCKER, SGLANG_*)
-    # are available in this shell process.  The GH Actions runner reads .env
-    # into its own process but does not export every variable into the subprocess
-    # environment, so we source it explicitly here.
-    # .env lives two levels above GITHUB_WORKSPACE (_work/<repo>/<repo> → runner root).
-    _RUNNER_ENV="${GITHUB_WORKSPACE%/*/*}/.env"
-    if [[ -f "$_RUNNER_ENV" ]]; then
-        set -a
-        # shellcheck disable=SC1090
-        source "$_RUNNER_ENV"
-        set +a
-    fi
-
     if ! command -v salloc >/dev/null 2>&1 || [[ "${FORCE_DOCKER:-}" == "1" ]]; then
+        # Load runner .env explicitly so vars set there (e.g. bundle tuning knobs)
+        # are available for -e "VAR=${VAR}" forwarding below. GH Actions runner
+        # loads .env into its own process but does NOT export it to subprocesses.
+        _RUNNER_ENV="${GITHUB_WORKSPACE%/*/*}/.env"
+        if [[ -f "$_RUNNER_ENV" ]]; then
+            set -a; source "$_RUNNER_ENV"; set +a
+        fi
         export HF_CACHE_LOCAL="${HOME}/.cache/huggingface"
         export AIPERF_CACHE_LOCAL="${HOME}/.cache/aiperf-mmap"
         # Host-side path for the HF hub dataset cache (aiperf traces).
@@ -326,8 +319,9 @@ else
             -e RESULT_FILENAME \
             -e PYTHONDONTWRITEBYTECODE=1 \
             -e PYTHONPYCACHEPREFIX=/tmp/inferencex-pycache \
-            ${SGLANG_DSA_HIP_DISABLE_PRESHUFFLE:+-e "SGLANG_DSA_HIP_DISABLE_PRESHUFFLE=${SGLANG_DSA_HIP_DISABLE_PRESHUFFLE}"} \
-            ${SGLANG_AITER_DISABLE_GLUON_FP8_MQA:+-e "SGLANG_AITER_DISABLE_GLUON_FP8_MQA=${SGLANG_AITER_DISABLE_GLUON_FP8_MQA}"} \
+            ${CHUNKED_PREFILL_SIZE_OVERRIDE:+-e "CHUNKED_PREFILL_SIZE_OVERRIDE=${CHUNKED_PREFILL_SIZE_OVERRIDE}"} \
+            ${ROCM_QUICK_REDUCE_QUANTIZATION:+-e "ROCM_QUICK_REDUCE_QUANTIZATION=${ROCM_QUICK_REDUCE_QUANTIZATION}"} \
+            ${SGLANG_USE_AITER_UNIFIED_ATTN:+-e "SGLANG_USE_AITER_UNIFIED_ATTN=${SGLANG_USE_AITER_UNIFIED_ATTN}"} \
             "$IMAGE" \
             bash "$BENCHMARK_SCRIPT"
         _docker_rc=$?
