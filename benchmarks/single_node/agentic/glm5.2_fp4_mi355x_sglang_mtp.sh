@@ -59,8 +59,12 @@ export PYTHONNOUSERSITE=1
 #   SGLANG_USE_AITER_UNIFIED_ATTN=1     → I-7: AITER unified-attention kernel
 #   CHUNKED_PREFILL_SIZE_OVERRIDE=16384 → I-1: smaller prefill chunk
 # All three are no-ops when unset, so the same script covers baseline and bundle.
-[[ -n "${ROCM_QUICK_REDUCE_QUANTIZATION:-}" ]]   && export ROCM_QUICK_REDUCE_QUANTIZATION
-[[ -n "${SGLANG_USE_AITER_UNIFIED_ATTN:-}" ]]    && export SGLANG_USE_AITER_UNIFIED_ATTN
+[[ -n "${ROCM_QUICK_REDUCE_QUANTIZATION:-}" ]]      && export ROCM_QUICK_REDUCE_QUANTIZATION
+[[ -n "${SGLANG_USE_AITER_UNIFIED_ATTN:-}" ]]       && export SGLANG_USE_AITER_UNIFIED_ATTN
+# P-2 workaround: SGLANG_DSA_HIP_DISABLE_PRESHUFFLE=1 changes block-table layout
+# (page_size=64 preshuffle → page_size=1 legacy) to avoid the Triton AMD compiler
+# iota_range assertion in fp8_mqa_logits on gfx950 (v0.5.18 regression).
+[[ -n "${SGLANG_DSA_HIP_DISABLE_PRESHUFFLE:-}" ]]   && export SGLANG_DSA_HIP_DISABLE_PRESHUFFLE
 # Agentic warmup dispatches hundreds of large prompts at once; allow up to
 # 15 minutes of TCP progress before AIPerf declares a connection dead.
 export AIPERF_HTTP_TCP_USER_TIMEOUT=900000
