@@ -594,23 +594,26 @@ HICACHE_WRITE_POLICY=write_through_selective
 
 **Run:** 33082277166 `h1h2-hicache-ratio2.5-wts`
 
-**Risultati c10 (live, ~11 min):**
+**Risultati c10 finali (run 33082277166, 3611s, 1409 req):**
 
-| t | tput_out | tok/s/GPU | cpu_kv_usage | kv_usage GPU | ITL p50 | queue |
-|---|----------|-----------|--------------|--------------|---------|-------|
-| 03:05 | 202/s | 50 | 33% | 9% | 9ms | 2 |
-| 06:06 | 288/s | 72 | 41% | 24% | 13ms | 10 |
-| 11:10 | 375/s | **93.8** | 56% | 37% | 14ms | 10 |
-| ~15min | **445/s** | **111** | ~60%? | — | — | — |
-| *baseline* | *363/s* | *91* | *100%* | — | *11.9ms* | — |
+| Metrica | H-1+H-2 c10 | Baseline c10 | Δ |
+|---------|-------------|--------------|---|
+| ITL p50 | 12.2 ms | 11.9 ms | +2% |
+| ITL p90 | 19.7 ms | 19.4 ms | +2% |
+| P90 intvty | 50.9 | ~52 | -2% |
+| **tok/s/GPU output** | **91.4** | **91.0** | **+0.4% (neutro)** |
+| TTFT p50 | 472 ms | 509 ms | -7% |
+| cpu_kv_usage finale | 100% | 100% | = |
 
-**Segnale chiave:** `cpu_kv_usage` al 56% vs 100% baseline — pool 2.5× assorbe il carico senza saturare. `tput_out` a 445/s = **+22% vs baseline**. Risultati finali al termine del run.
+**Nota live:** a ~15 min il `tput_out` era 445/s (111 tok/s/GPU) ma era transitorio — il pool 2.5× ritarda la saturazione ma non la elimina. A regime (3600s) il `cpu_kv_usage` torna al 100% e il throughput converge alla baseline.
+
+**Verdetto: H-1+H-2 neutro.** Il workload a c10/3600s riempie qualunque pool DRAM disponibile. `write_through_selective` non cambia le dinamiche di eviction a regime. Il gain di throughput è strutturalmente limitato da un collo di bottiglia diverso dall'HiCache size.
 
 ---
 
 ## H-1+H-2 follow-up — c12 (throughput headroom)
 
-**Motivazione:** a c10 con ratio=2.5 il `cpu_kv_usage` è al ~56-60% e `tput_out` ha raggiunto 445/s (111 tok/s/GPU, +22% vs baseline). Il GPU KV budget era al 37% — ampio margine. c12 verifica se il throughput continua a salire o se emerge un nuovo collo di bottiglia (batch decode troppo grande, ITL fuori controllo).
+**Motivazione:** c10 finale è neutro (91.4 tok/s/GPU). Il gain transitorio osservato a 15min (111 tok/s/GPU) era dovuto al pool non ancora saturo. c12 serve per verificare se aumentare il CONC porta throughput reale una volta che la cache è a regime, o se il sistema satura prima.
 
 **Config:** `glm5.2-fp4-mi355x-sglang-agentic-mtp-hicache-c12` — TP=4/EP=4/c12, v0.5.16. Stesso `.env` di H-1+H-2.
 
