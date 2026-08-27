@@ -369,6 +369,20 @@ Colonne riferimento: CONC=10 per TP=4 (throughput arm); CONC=4/6 per TP=8 (inter
 | I-9: KV FP8 | 4-8 | — | — | — | — | — |
 | ~~I-6: TP=2+DCP=4~~ | — | deprioritizzato | | | | |
 
+### Runner .env per ogni run
+
+Tutte le variabili non elencate sono assenti (no-op). `FORCE_DOCKER`, `MODEL_PATH`, `HF_HUB_CACHE_HOST` sono invarianti infrastrutturali presenti in tutti i run su mia1.
+
+| Run / Esperimento | GH Run ID | Variabili aggiuntive in `.env` |
+|-------------------|-----------|-------------------------------|
+| Baseline TP=8 EP=8 | 32947505370 | *(nessuna)* |
+| I-8: TP=8/EP=1 | 32986446019 | *(nessuna — EP configurato nel config key)* |
+| Bundle invalidato I-1+I-3+I-7 | 32999605584 | `CHUNKED_PREFILL_SIZE_OVERRIDE=16384` `ROCM_QUICK_REDUCE_QUANTIZATION=INT8` `SGLANG_USE_AITER_UNIFIED_ATTN=1` — **non arrivavano al container** |
+| P-2 v0.5.18-rocm724 | 33060449114 | *(nessuna — patch applicata incondizionatamente nello script)* |
+| Bundle re-run I-1+I-3+I-7 | 33065762186 | `CHUNKED_PREFILL_SIZE_OVERRIDE=16384` `ROCM_QUICK_REDUCE_QUANTIZATION=INT8` `SGLANG_USE_AITER_UNIFIED_ATTN=1` |
+| I-10 CGBS (cancellato) | 33076693271 | `CUDA_GRAPH_BS_LIST_OVERRIDE=1 2 3 4 5 6 7 8` |
+| **H-1+H-2 HiCache bundle** | *(in coda)* | `HICACHE_RATIO=2.5` `HICACHE_WRITE_POLICY=write_through_selective` |
+
 ---
 
 ### 📊 Sintesi campagna di tuning SGLang TP=8 su MI355X (2026-08-25/27)
@@ -552,6 +566,33 @@ decode=PhaseConfig(max_bs=12, bs=[1, 2, 3, 4, 5, 6, 7, 8, 10, 12])
 SGLang interpola una progressione tra 1 e max_bs — non compila un singolo grafo. Il test avrebbe avuto beneficio marginale e non giustificava 1.5h di GPU.
 
 **Conclusione:** il gap residuo vs ATOM non è spiegato dai CUDA graph. SGLang è già equivalente su questo aspetto. La variabile `CUDA_GRAPH_BS_LIST_OVERRIDE` rimossa dal runner `.env`.
+
+---
+
+## H-1+H-2 — HiCache bundle (TP=4/c10, throughput arm)
+
+**Obiettivo:** aumentare il throughput a c10 partendo dalla diagnosi che `cpu_kv_usage=100%` nella baseline indica evictions KV continue → richieste bloccate in attesa di cache spazio → effective CONC p50=5 su 10 configurato.
+
+**Esperimenti:**
+- **H-1** `HICACHE_WRITE_POLICY=write_through_selective`: scrive DRAM solo per prefill ad alta riusabilità (PR #2679). Riduce bandwidth sprecata su KV che non verranno mai riusati.
+- **H-2** `HICACHE_RATIO=2.5`: alloca più DRAM host per KV (da 1.5×GPU pool a 2.5×). Su mia1 con TP=4 ogni rank ha ~400 GB DRAM disponibile — ampio margine.
+
+**Config:** `glm5.2-fp4-mi355x-sglang-agentic-mtp-hicache` — TP=4/EP=4/c10, v0.5.16.
+
+**Runner `.env` (mia1):**
+```
+FORCE_DOCKER=1
+MODEL_PATH=/it-share/models/GLM-5.2-MXFP4
+HF_HUB_CACHE_HOST=/mnt/hf_hub_cache
+HICACHE_RATIO=2.5
+HICACHE_WRITE_POLICY=write_through_selective
+```
+
+**Run:** *(in coda dopo bundle re-run)*
+
+**Attesa:** `cpu_kv_usage` scende sotto 80%, `effective CONC` sale verso 8-10, `tok/s/GPU` migliora da 91 verso 110+. Se `cpu_kv_usage` rimane alto con ratio=2.5, il collo di bottiglia è altrove (bandwidth DRAM o scheduling).
+
+**Risultati:** da completare.
 
 ---
 
