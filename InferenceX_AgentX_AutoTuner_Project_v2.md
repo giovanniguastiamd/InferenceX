@@ -543,18 +543,15 @@ ITL p50=7ms stabile a regime — leggermente meglio della baseline EP=8 (8.3ms),
 
 **Config:** `glm5.2-fp4-mi355x-sglang-agentic-mtp-cgbs` — solo c4, TP=8/EP=1, v0.5.16.
 
-**Run:** 33076693271 `i10-cgbs-c4-pure` — in coda su `testgg-maxreq2x`.
-Runner `.env` per questo test (bundle vars rimosse per confronto pulito vs EP=1 baseline):
-```
-FORCE_DOCKER=1
-MODEL_PATH=/it-share/models/GLM-5.2-MXFP4
-HF_HUB_CACHE_HOST=/mnt/hf_hub_cache
-CUDA_GRAPH_BS_LIST_OVERRIDE=1 2 3 4 5 6 7 8
-```
+**Run:** 33076693271 — **cancellato prima dell'esecuzione**.
 
-**Attesa:** riduzione ITL p95 (meno spike da eager execution) e potenziale miglioramento ITL p50 se i decode step a bs<8 erano frequentemente eager. Se l'effetto è nullo, significa che SGLang già gestisce i batch size intermedi in modo efficiente (es. padding al grafo più vicino).
+**Motivo:** dal server log del bundle re-run (c6) si vede che SGLang con `--cuda-graph-max-bs 12` genera già automaticamente una lista di batch size:
+```
+decode=PhaseConfig(max_bs=12, bs=[1, 2, 3, 4, 5, 6, 7, 8, 10, 12])
+```
+SGLang interpola una progressione tra 1 e max_bs — non compila un singolo grafo. Il test avrebbe avuto beneficio marginale e non giustificava 1.5h di GPU.
 
-**Risultati:** da completare al termine del run.
+**Conclusione:** il gap residuo vs ATOM non è spiegato dai CUDA graph. SGLang è già equivalente su questo aspetto. La variabile `CUDA_GRAPH_BS_LIST_OVERRIDE` rimossa dal runner `.env`.
 
 ---
 
