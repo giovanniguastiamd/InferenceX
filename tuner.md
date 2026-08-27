@@ -384,7 +384,8 @@ Tutte le variabili non elencate sono assenti (no-op). `FORCE_DOCKER`, `MODEL_PAT
 | P-2 v0.5.18-rocm724 | 33060449114 | *(nessuna — patch applicata incondizionatamente nello script)* |
 | Bundle re-run I-1+I-3+I-7 | 33065762186 | `CHUNKED_PREFILL_SIZE_OVERRIDE=16384` `ROCM_QUICK_REDUCE_QUANTIZATION=INT8` `SGLANG_USE_AITER_UNIFIED_ATTN=1` |
 | I-10 CGBS (cancellato) | 33076693271 | `CUDA_GRAPH_BS_LIST_OVERRIDE=1 2 3 4 5 6 7 8` |
-| **H-1+H-2 HiCache bundle** | *(in coda)* | `HICACHE_RATIO=2.5` `HICACHE_WRITE_POLICY=write_through_selective` |
+| **H-1+H-2 HiCache bundle** | 33082277166 | `HICACHE_RATIO=2.5` `HICACHE_WRITE_POLICY=write_through_selective` |
+| **H-1+H-2 c12** | 33097110633 | `HICACHE_RATIO=2.5` `HICACHE_WRITE_POLICY=write_through_selective` |
 
 ---
 
@@ -591,9 +592,31 @@ HICACHE_RATIO=2.5
 HICACHE_WRITE_POLICY=write_through_selective
 ```
 
-**Run:** *(in coda dopo bundle re-run)*
+**Run:** 33082277166 `h1h2-hicache-ratio2.5-wts`
 
-**Attesa:** `cpu_kv_usage` scende sotto 80%, `effective CONC` sale verso 8-10, `tok/s/GPU` migliora da 91 verso 110+. Se `cpu_kv_usage` rimane alto con ratio=2.5, il collo di bottiglia è altrove (bandwidth DRAM o scheduling).
+**Risultati c10 (live, ~11 min):**
+
+| t | tput_out | tok/s/GPU | cpu_kv_usage | kv_usage GPU | ITL p50 | queue |
+|---|----------|-----------|--------------|--------------|---------|-------|
+| 03:05 | 202/s | 50 | 33% | 9% | 9ms | 2 |
+| 06:06 | 288/s | 72 | 41% | 24% | 13ms | 10 |
+| 11:10 | 375/s | **93.8** | 56% | 37% | 14ms | 10 |
+| ~15min | **445/s** | **111** | ~60%? | — | — | — |
+| *baseline* | *363/s* | *91* | *100%* | — | *11.9ms* | — |
+
+**Segnale chiave:** `cpu_kv_usage` al 56% vs 100% baseline — pool 2.5× assorbe il carico senza saturare. `tput_out` a 445/s = **+22% vs baseline**. Risultati finali al termine del run.
+
+---
+
+## H-1+H-2 follow-up — c12 (throughput headroom)
+
+**Motivazione:** a c10 con ratio=2.5 il `cpu_kv_usage` è al ~56-60% e `tput_out` ha raggiunto 445/s (111 tok/s/GPU, +22% vs baseline). Il GPU KV budget era al 37% — ampio margine. c12 verifica se il throughput continua a salire o se emerge un nuovo collo di bottiglia (batch decode troppo grande, ITL fuori controllo).
+
+**Config:** `glm5.2-fp4-mi355x-sglang-agentic-mtp-hicache-c12` — TP=4/EP=4/c12, v0.5.16. Stesso `.env` di H-1+H-2.
+
+**Run:** 33097110633 `h1h2-hicache-c12` — in coda.
+
+**Attesa:** `cpu_kv_usage` sale verso 70-75%, `tput_out` > 445/s → >111 tok/s/GPU. Se ITL p50 supera 20ms, c12 è oltre C\* per questo arm.
 
 **Risultati:** da completare.
 
