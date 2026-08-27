@@ -259,7 +259,7 @@ else
         # Load runner .env explicitly so vars set there (e.g. bundle tuning knobs)
         # are available for -e "VAR=${VAR}" forwarding below. GH Actions runner
         # loads .env into its own process but does NOT export it to subprocesses.
-        _RUNNER_ENV="${GITHUB_WORKSPACE%/*/*}/.env"
+        _RUNNER_ENV="${GITHUB_WORKSPACE%/*/*/*}/.env"
         if [[ -f "$_RUNNER_ENV" ]]; then
             set -a; source "$_RUNNER_ENV"; set +a
         fi
