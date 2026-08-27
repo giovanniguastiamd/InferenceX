@@ -472,12 +472,12 @@ cpu_kv_usage=100% a CONC=10. Parametri validati da PR #2679 come riferimento.
 
 | # | Esperimento | Condizione |
 |---|-------------|------------|
-| **P-1** | v0.5.18-rocm720 retry | Solo dopo fix Triton LLVM `iota_range` upstream confermato |
-| **P-2** | v0.5.18-rocm724 (ROCm 7.2.4) | **Prossimo candidato** — potrebbe attivare I-3/I-7 già testati. Testare solo TP=8/EP=1 (skip TP=4/HiCache per evitare regressione Triton) |
-| **P-3** | AITER unified attention | Testato su v0.5.16 (I-7): neutro. Rivalutare su v0.5.18+ |
+| **P-1** | v0.5.18-rocm720 retry | Saltato — superato da P-2 |
+| **P-2** | v0.5.18-rocm724 (ROCm 7.2.4) | **🔵 IN CORSO (2026-08-27)** — immagine `v0.5.18-rocm724-mi35x-20260826` scaricata su mia1. Config key `glm5.2-fp4-mi355x-sglang-agentic-mtp-v518r724`, TP=8/EP=1/conc=[4,6,8,10]. Siamo passati direttamente a P-2 saltando P-1: la build rocm724 del 26 agosto è quella più aggiornata disponibile e include ROCm 7.2.4 che potrebbe attivare I-3/I-7. |
+| **P-3** | AITER unified attention | Testato su v0.5.16 (I-7): neutro. Potrebbe diventare attivo su v0.5.18-rocm724 — lo verificheremo dai log del run P-2. |
 | **F-5** | DP Attention | Solo dopo fix upstream ROCm |
 
-> **Nota post-campagna (2026-08-27):** I-1, I-3, I-7 tutti neutrali su v0.5.16. P-2 (v0.5.18-rocm724) è il prossimo step naturale per sbloccare i kernel ROCm avanzati. Testare prima solo TP=8/EP=1/c4 (run corto, ~70 min) per validare regressione assente.
+> **Decisione 2026-08-27:** Saltato P-1 (v0.5.18-rocm720) — superato direttamente da P-2 (v0.5.18-rocm724). Motivazione: rocm724 è più recente, potenzialmente già include il fix Triton LLVM, e ha kernel AITER/NCCL più aggiornati. Il rischio di regressione è contenuto testando solo TP=8/EP=1 (skip TP=4/HiCache). Confronto: EP=1/v0.5.16 P90=110.5 → target P90>115 su v0.5.18.
 
 ---
 
