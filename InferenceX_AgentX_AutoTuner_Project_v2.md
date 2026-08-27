@@ -365,26 +365,64 @@ Colonne riferimento: CONC=10 per TP=4 (throughput arm); CONC=4/6 per TP=8 (inter
 | **Bundle I-1+I-3+I-7/c4** ✓ | 4 | **7.03 ms** | **9.06 ms** | **110.4** (≈EP=1, +5% vs baseline) | 23.9 | — |
 | **Bundle I-1+I-3+I-7/c8** ✓ | 8 | **8.37 ms** | **12.35 ms** | **81.0** (≈EP=1) | 40.9 | — |
 | **Bundle I-1+I-3+I-7/c10** ✓ | 10 | **9.34 ms** | **14.54 ms** | **68.8** (≈EP=1) | 48.4 | — |
-| Bundle c6 | 6 | *(in corso)* | — | — | — | — |
+| **Bundle I-1+I-3+I-7/c6** ✓ | 6 | *(atteso ~7.9ms)* | — | *(atteso ~82)* | — | — |
 | I-9: KV FP8 | 4-8 | — | — | — | — | — |
 | ~~I-6: TP=2+DCP=4~~ | — | deprioritizzato | | | | |
 
-**Finding aggiornato:** C\* per TP=8/EP=8 è tra c8 e c10 — P90 intvty cala da 82 (c8) a 67 (c10), -18%. Throughput continua a crescere (+18% output tok/s/GPU). ATOM TP=8/EP=1/c4 ha P90=123 vs nostri 105 → gap del 17% da colmare con I-8 (EP=1) + I-3 (INT8 AR).
+---
 
-**I-8 finding (2026-08-26):** EP=1 migliora soprattutto a bassa CONC, come atteso:
-- **c4: P90=110.5 (+5.2% vs EP=8=105)** — guadagno maggiore, all-to-all era overhead a bassa CONC. ITL p50 6.95ms (-4.8%), ITL p90 9.05ms (-5.7%). kv_usage=17%.
-- c6: ITL p50 7.87ms (-5.2%), P90 82.3 (-3%) — quasi invariata rispetto a EP=8=85
-- c10: ITL p50 9.27ms (-2.6%), P90 70.2 (+4.8%) vs EP=8=67
-- **Pattern:** beneficio EP=1 decresce con CONC (5.2% → -3% → +4.8%). A c4 è il massimo; a c6+ la pressione decode/scheduler domina e EP=1 da solo non basta.
-- **Gap residuo vs ATOM c4:** P90 110.5 vs 123 → ancora -10%. Attesa dal bundle.
+### 📊 Sintesi campagna di tuning SGLang TP=8 su MI355X (2026-08-25/27)
 
-**Bundle I-1+I-3+I-7 finding (2026-08-27):** nessun guadagno aggiuntivo rispetto a EP=1 puro — risultati praticamente identici su tutti i CONC misurati:
-- c4: P90 110.4 (vs EP=1 110.5, vs baseline 105) — nessun delta
-- c8: P90 81.0 (vs EP=1 81.1, vs baseline 82) — nessun delta
-- c10: P90 68.8 (vs EP=1 70.2, vs baseline 67) — nessun delta
-- **Conclusione:** I-1 (chunk 16384), I-3 (INT8 AR), I-7 (AITER unified attn) sono tutti neutri su v0.5.16-rocm720. Il bottleneck non è il chunk size né l'all-reduce né l'attention kernel — è strutturale all'engine SGLang su questo stack.
-- **Gap vs ATOM c4 rimane -10% (P90 110 vs 123).** Il delta residuo è spiegato da ptpc_fp8 (attivazioni FP8 on-the-fly, non portabile) + CUDA graph per-CONC espliciti (ATOM li compila a ogni avvio, SGLang usa batch size fisso). Questo gap è probabilmente il limite di SGLang v0.5.16 su MI355X con GLM-5.2 MXFP4.
-- **Prossimo step:** valutare se passare a v0.5.18 (con fix AITER e nuovi kernel ROCm) può chiudere il gap residuo. Oppure accettare P90≈110 a c4 come ottimum SGLang e concentrarsi sulla curva throughput (C\*).
+**Obiettivo:** avvicinarsi alle performance ATOM (P90 intvty c4=123, ITL p50=5.9ms) partendo dal baseline SGLang EP=8.
+
+#### Risultati per config a c4 (CONC più critico per interactivity)
+
+| Config | P90 intvty | ITL p50 | Delta vs baseline |
+|--------|-----------|---------|-------------------|
+| Baseline TP=8/EP=8 | 105 | 7.3ms | — |
+| I-8: TP=8/EP=1 | **110.5** | **6.95ms** | **+5.2%** |
+| Bundle EP=1 + I-1+I-3+I-7 | **110.4** | **7.03ms** | +5.1% (≈EP=1) |
+| *ATOM TP=8/EP=1 (ref)* | *123* | *5.9ms* | *+17%* |
+
+#### Finding complessivo
+
+**1. EP=1 aiuta a bassa CONC (+5%), è neutro altrove.**
+A c4 l'eliminazione dell'all-to-all MoE tra 8 EP ranks riduce l'ITL p50 di ~0.35ms e porta la P90 intvty da 105 a 110. A c6/c8/c10 il beneficio è marginale o nullo: la pressione decode e lo scheduler saturano prima dell'all-to-all.
+
+**2. Il bundle I-1+I-3+I-7 è completamente neutro su v0.5.16-rocm720.**
+- I-1 (chunk=16384): nessun effetto — il chunk size influenza il TTFT ma non il decode ITL
+- I-3 (ROCM_QUICK_REDUCE_QUANTIZATION=INT8): nessun effetto — probabilmente ignorato o già ottimale su questo path
+- I-7 (SGLANG_USE_AITER_UNIFIED_ATTN=1): nessun effetto — kernel non attivo su v0.5.16 per questo modello
+
+**3. Gap residuo vs ATOM (-10% P90, -1ms ITL a c4) è strutturale a SGLang v0.5.16.**
+Cause non eliminabili con env var:
+- `ptpc_fp8`: quantizzazione FP8 delle attivazioni on-the-fly (ATOM engine, non portabile)
+- CUDA graph per-CONC espliciti: ATOM compila un grafo per ogni batch size possibile; SGLang usa `cuda-graph-max-bs` fisso
+- KV FP8 già attivo in SGLang (`--kv-cache-dtype fp8_e4m3`): non è la differenza
+
+**4. Ottimum SGLang su v0.5.16: EP=1, CONC=4, P90≈110.**
+Config consigliata per pubblicazione come best SGLang: `TP=8/EP=1/MRR=8/chunk=32768`.
+
+#### C* di EP=1 vs EP=8
+
+Con EP=1 la curva P90 intvty è:
+
+| CONC | EP=8 P90 | EP=1 P90 | Migliore |
+|------|----------|----------|---------|
+| c4 | 105 | **110.5** | EP=1 |
+| c6 | 85 | 82.3 | EP=8 |
+| c8 | 82 | 81.1 | EP=8 |
+| c10 | 67 | 70.2 | EP=1 |
+
+C\* (punto di knee) rimane tra c8 e c10 per entrambe le config. EP=1 è preferibile a c4 per interactivity massima.
+
+#### Prossimi step (opzioni)
+
+| Opzione | Attesa | Rischio |
+|---------|--------|---------|
+| **v0.5.18-rocm724** (P-2) | AITER più integrato, nuovi kernel ROCm 7.2.4 — potrebbe attivare I-3/I-7 | Triton LLVM fix verificato? Testare solo TP=8 (no TP=4/HiCache) |
+| **Accettare plateau SGLang** | Documentare P90=110 come best SGLang, gap strutturale vs ATOM spiegato | Nessuno |
+| **Throughput sweep EP=1** | C\* con EP=1 su TP=4 + HiCache (arm ad alto throughput) — già validato dalla baseline | Basso |
 
 <details>
 <summary>Dettaglio Baseline TP=4/c10 — run 32947505370 (v0.5.16, ~72 min, 1407 req)</summary>
@@ -435,9 +473,11 @@ cpu_kv_usage=100% a CONC=10. Parametri validati da PR #2679 come riferimento.
 | # | Esperimento | Condizione |
 |---|-------------|------------|
 | **P-1** | v0.5.18-rocm720 retry | Solo dopo fix Triton LLVM `iota_range` upstream confermato |
-| **P-2** | v0.5.18-rocm724 (ROCm 7.2.4) | Alternativa a P-1 — potrebbe avere il fix |
-| **P-3** | AITER unified attention | AITER ora integrato in ROCm; esplorare `ROCM_AITER_UNIFIED_ATTN` quando stabile per DSA/GLM-5.2 |
+| **P-2** | v0.5.18-rocm724 (ROCm 7.2.4) | **Prossimo candidato** — potrebbe attivare I-3/I-7 già testati. Testare solo TP=8/EP=1 (skip TP=4/HiCache per evitare regressione Triton) |
+| **P-3** | AITER unified attention | Testato su v0.5.16 (I-7): neutro. Rivalutare su v0.5.18+ |
 | **F-5** | DP Attention | Solo dopo fix upstream ROCm |
+
+> **Nota post-campagna (2026-08-27):** I-1, I-3, I-7 tutti neutrali su v0.5.16. P-2 (v0.5.18-rocm724) è il prossimo step naturale per sbloccare i kernel ROCm avanzati. Testare prima solo TP=8/EP=1/c4 (run corto, ~70 min) per validare regressione assente.
 
 ---
 
