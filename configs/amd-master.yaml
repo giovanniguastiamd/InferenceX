@@ -1737,6 +1737,23 @@ glm5.2-fp4-mi355x-sglang-agentic-mtp-v518r724:
     - dram-utilization: 0.8
       search-space:
       - { tp: 8, ep: 1, kv-offloading: none, conc-list: [4, 6, 8, 10], spec-decoding: mtp }
+# I-10: explicit per-batch-size CUDA graph capture for c4 only.
+# Requires CUDA_GRAPH_BS_LIST_OVERRIDE="1 2 3 4 5 6 7 8" in runner .env.
+# Other CONC values fall back to --cuda-graph-max-bs as usual.
+glm5.2-fp4-mi355x-sglang-agentic-mtp-cgbs:
+  image: lmsysorg/sglang-rocm:v0.5.16-rocm720-mi35x-20260728
+  model: amd/GLM-5.2-MXFP4
+  model-prefix: glm5.2
+  runner: cluster:mi355x-amds
+  precision: fp4
+  framework: sglang
+  multinode: false
+  scenarios:
+    agentic-coding:
+    - dram-utilization: 0.8
+      search-space:
+      - { tp: 8, ep: 1, kv-offloading: none, conc-list: [4], spec-decoding: mtp }
+
 glm5.2-fp4-mi355x-sglang-agentic-mtp-bundle:
   image: lmsysorg/sglang-rocm:v0.5.16-rocm720-mi35x-20260728
   model: amd/GLM-5.2-MXFP4

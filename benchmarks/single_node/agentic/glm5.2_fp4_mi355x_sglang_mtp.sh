@@ -211,6 +211,18 @@ fi
 MAX_RUNNING_REQUESTS=$((2 * CONC))
 [ "$MAX_RUNNING_REQUESTS" -gt 256 ] && MAX_RUNNING_REQUESTS=256
 CUDA_GRAPH_MAX_BS=$(( MAX_RUNNING_REQUESTS < 64 ? MAX_RUNNING_REQUESTS : 64 ))
+# I-10: explicit per-batch-size CUDA graph list for c4.
+# With only --cuda-graph-max-bs, SGLang compiles ONE graph for the max batch
+# size; any decode step with a smaller batch falls back to eager execution.
+# Capturing every size 1..MRR ensures every decode step is graph-accelerated,
+# matching ATOM's --cudagraph-capture-sizes approach.
+# Activated via CUDA_GRAPH_BS_LIST_OVERRIDE env var (set in runner .env).
+# For c4: MRR=8, so we capture 1-8; ignored for other CONC values.
+if [[ -n "${CUDA_GRAPH_BS_LIST_OVERRIDE:-}" && "$CONC" -eq 4 ]]; then
+    CUDA_GRAPH_ARGS=(--cuda-graph-bs $CUDA_GRAPH_BS_LIST_OVERRIDE)
+else
+    CUDA_GRAPH_ARGS=(--cuda-graph-max-bs "$CUDA_GRAPH_MAX_BS")
+fi
 
 if [ "${EVAL_ONLY:-false}" != "true" ]; then
     export SGLANG_SIMULATE_ACC_LEN=3.61
@@ -237,7 +249,7 @@ SGLANG_CMD=(
     --chunked-prefill-size "$CHUNKED_PREFILL_SIZE"
     --mem-fraction-static "$MEM_FRACTION_STATIC"
     --max-running-requests "$MAX_RUNNING_REQUESTS"
-    --cuda-graph-max-bs "$CUDA_GRAPH_MAX_BS"
+    "${CUDA_GRAPH_ARGS[@]}"
     --speculative-algorithm EAGLE
     --speculative-num-steps 5
     --speculative-eagle-topk 1
