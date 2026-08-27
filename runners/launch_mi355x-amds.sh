@@ -255,6 +255,20 @@ else
     # Set FORCE_DOCKER=1 in the runner .env to bypass Slurm even if salloc is
     # installed (e.g. machines where salloc is present but no cluster partition
     # is configured).
+
+    # Load runner .env so variables set there (e.g. FORCE_DOCKER, SGLANG_*)
+    # are available in this shell process.  The GH Actions runner reads .env
+    # into its own process but does not export every variable into the subprocess
+    # environment, so we source it explicitly here.
+    # .env lives two levels above GITHUB_WORKSPACE (_work/<repo>/<repo> → runner root).
+    _RUNNER_ENV="${GITHUB_WORKSPACE%/*/*}/.env"
+    if [[ -f "$_RUNNER_ENV" ]]; then
+        set -a
+        # shellcheck disable=SC1090
+        source "$_RUNNER_ENV"
+        set +a
+    fi
+
     if ! command -v salloc >/dev/null 2>&1 || [[ "${FORCE_DOCKER:-}" == "1" ]]; then
         export HF_CACHE_LOCAL="${HOME}/.cache/huggingface"
         export AIPERF_CACHE_LOCAL="${HOME}/.cache/aiperf-mmap"
