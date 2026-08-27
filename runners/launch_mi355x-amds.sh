@@ -312,6 +312,8 @@ else
             -e RESULT_FILENAME \
             -e PYTHONDONTWRITEBYTECODE=1 \
             -e PYTHONPYCACHEPREFIX=/tmp/inferencex-pycache \
+            ${SGLANG_DSA_HIP_DISABLE_PRESHUFFLE:+-e SGLANG_DSA_HIP_DISABLE_PRESHUFFLE} \
+            ${SGLANG_AITER_DISABLE_GLUON_FP8_MQA:+-e SGLANG_AITER_DISABLE_GLUON_FP8_MQA} \
             "$IMAGE" \
             bash "$BENCHMARK_SCRIPT"
         _docker_rc=$?
