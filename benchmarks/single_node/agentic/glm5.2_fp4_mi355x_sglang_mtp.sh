@@ -254,14 +254,12 @@ src = target.read_text()
 if marker in src:
     print(f"fp8_mqa_logits.py already patched at {target}", flush=True); sys.exit(0)
 
-import torch as _torch
-
 FALLBACK = '''
 
 # --- gfx950 workaround: unconditional torch fallback for fp8_mqa_logits ---
 # Both gluon and standard Triton paths crash on gfx950 with v0.5.18-rocm724
-# due to an LLVM iota_range assertion. This pure-torch BF16 matmul fallback
-# produces correct KV-block rankings for DSA top-k selection.
+# due to an LLVM iota_range assertion. This fallback processes each sequence
+# independently to avoid allocating a full [batch x total_kv] matrix (OOM).
 import torch as _torch
 _FP8_MQA_TORCH_FALLBACK_INSTALLED = True
 
@@ -270,20 +268,17 @@ def fp8_mqa_logits(Q, KV, kv_scales, weights, cu_starts, cu_ends, clean_logits=T
     seq_len_kv = KV.shape[0]
     aligned = 256
     seq_len_kv_al = (seq_len_kv + aligned - 1) // aligned * aligned
-    if clean_logits:
-        logits = _torch.full((seq_len, seq_len_kv_al), -float("inf"),
-                             dtype=_torch.float32, device=Q.device)[:, :seq_len_kv]
-    else:
-        logits = _torch.empty((seq_len, seq_len_kv_al),
-                              dtype=_torch.float32, device=Q.device)[:, :seq_len_kv]
-    q_f32 = Q.to(_torch.float32)
-    kv_f32 = KV.to(_torch.float32) * kv_scales.view(-1, 1)
-    q_w = (weights.unsqueeze(-1) * q_f32).sum(dim=1)
-    raw = _torch.mm(q_w, kv_f32.t())
-    kv_idx = _torch.arange(seq_len_kv, device=Q.device)[None, :]
-    mask = (kv_idx >= cu_starts[:, None]) & (kv_idx < cu_ends[:, None])
-    logits[mask] = raw[mask]
-    return logits
+    logits = _torch.full((seq_len, seq_len_kv_al), -float("inf"),
+                         dtype=_torch.float32, device=Q.device)
+    kv_f32 = KV.to(_torch.float32) * kv_scales.view(-1, 1)  # [seq_len_kv, head_size]
+    q_f32 = Q.to(_torch.float32)                             # [seq_len, num_heads, head_size]
+    q_w = (weights.unsqueeze(-1) * q_f32).sum(dim=1)        # [seq_len, head_size]
+    for i in range(seq_len):
+        s = int(cu_starts[i].item())
+        e = int(cu_ends[i].item())
+        if e > s:
+            logits[i, s:e] = _torch.mv(kv_f32[s:e], q_w[i])
+    return logits[:, :seq_len_kv]
 '''
 
 target.write_text(src + FALLBACK)
