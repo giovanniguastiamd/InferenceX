@@ -1721,6 +1721,22 @@ glm5.2-fp4-mi355x-sglang-agentic-mtp-ep1:
 #   ROCM_QUICK_REDUCE_QUANTIZATION=INT8
 #   SGLANG_USE_AITER_UNIFIED_ATTN=1
 # Baseline comparison: glm5.2-fp4-mi355x-sglang-agentic-mtp (TP=8/EP=8).
+# GLM-5.2 FP4 agentic-coding on MI355X via SGLang v0.5.18-rocm724 — platform upgrade test.
+# TP=8/EP=1 only (skip TP=4/HiCache to avoid Triton LLVM regression seen on v0.5.18-rocm720).
+# Comparison: glm5.2-fp4-mi355x-sglang-agentic-mtp-ep1 (same config, v0.5.16-rocm720).
+glm5.2-fp4-mi355x-sglang-agentic-mtp-v518r724:
+  image: lmsysorg/sglang-rocm:v0.5.18-rocm724-mi35x-20260826
+  model: amd/GLM-5.2-MXFP4
+  model-prefix: glm5.2
+  runner: cluster:mi355x-amds
+  precision: fp4
+  framework: sglang
+  multinode: false
+  scenarios:
+    agentic-coding:
+    - dram-utilization: 0.8
+      search-space:
+      - { tp: 8, ep: 1, kv-offloading: none, conc-list: [4, 6, 8, 10], spec-decoding: mtp }
 glm5.2-fp4-mi355x-sglang-agentic-mtp-bundle:
   image: lmsysorg/sglang-rocm:v0.5.16-rocm720-mi35x-20260728
   model: amd/GLM-5.2-MXFP4
