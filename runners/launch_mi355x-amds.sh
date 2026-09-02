@@ -185,8 +185,8 @@ PY
                 # Eval artifacts are created as root inside the container; sudo
                 # is required to overwrite any stale root-owned files in the
                 # workspace from prior runs on this runner.
-                if sudo -n cp "$eval_file" "$eval_dest"; then
-                    sudo -n chown "$(id -u):$(id -g)" "$eval_dest" 2>/dev/null || true
+                if sudo cp "$eval_file" "$eval_dest"; then
+                    sudo chown "$(id -u):$(id -g)" "$eval_dest" 2>/dev/null || true
                     echo "Copied eval artifact: $(basename "$eval_file")"
                 else
                     echo "ERROR: failed to copy eval artifact: $(basename "$eval_file")" >&2
@@ -220,8 +220,9 @@ PY
                 echo "Staging agentic raw artifacts from $AGENTIC_SRC"
                 mkdir -p "$GITHUB_WORKSPACE/LOGS/agentic"
                 cp -r "$AGENTIC_SRC"/. "$GITHUB_WORKSPACE/LOGS/agentic/"
-                # Container artifacts arrive root-owned (NFS root_squash).
-                # chmod world-writable directly; chown would require sudo.
+                # Container artifacts arrive root-owned; chown/chmod so git clean
+                # and later jobs (possibly a different runner user) can remove LOGS/.
+                sudo chown -R "$(id -u):$(id -g)" "$GITHUB_WORKSPACE/LOGS" 2>/dev/null || true
                 chmod -R a+rwX "$GITHUB_WORKSPACE/LOGS" 2>/dev/null || true
                 ls -laR "$GITHUB_WORKSPACE/LOGS/agentic"
             else
@@ -256,7 +257,7 @@ else
     # installed (e.g. machines where salloc is present but no cluster partition
     # is configured).
     if ! command -v salloc >/dev/null 2>&1 || [[ "${FORCE_DOCKER:-}" == "1" ]]; then
-        # Load runner .env explicitly so vars set there (e.g. bundle tuning knobs)
+        # Load runner .env explicitly so vars set there (e.g. tuning knobs)
         # are available for -e "VAR=${VAR}" forwarding below. GH Actions runner
         # loads .env into its own process but does NOT export it to subprocesses.
         _RUNNER_ENV="${GITHUB_WORKSPACE%/*/*/*}/.env"
@@ -282,8 +283,7 @@ else
         fi
         # Make the workspace and results dir world-writable on the HOST so that
         # the container running as root (NFS root_squash maps root→nobody) can
-        # write both the result JSON (written to /workspace directly) and the
-        # per-run results subdir (/workspace/results).
+        # write both the result JSON and the per-run results subdir.
         chmod 777 "${GITHUB_WORKSPACE}"
         mkdir -p "${GITHUB_WORKSPACE}/results"
         chmod 777 "${GITHUB_WORKSPACE}/results"
@@ -321,6 +321,7 @@ else
             -e PYTHONPYCACHEPREFIX=/tmp/inferencex-pycache \
             ${CHUNKED_PREFILL_SIZE_OVERRIDE:+-e "CHUNKED_PREFILL_SIZE_OVERRIDE=${CHUNKED_PREFILL_SIZE_OVERRIDE}"} \
             ${ROCM_QUICK_REDUCE_QUANTIZATION:+-e "ROCM_QUICK_REDUCE_QUANTIZATION=${ROCM_QUICK_REDUCE_QUANTIZATION}"} \
+            ${ROCM_QUICK_REDUCE_CAST_BF16_TO_FP16:+-e "ROCM_QUICK_REDUCE_CAST_BF16_TO_FP16=${ROCM_QUICK_REDUCE_CAST_BF16_TO_FP16}"} \
             ${SGLANG_USE_AITER_UNIFIED_ATTN:+-e "SGLANG_USE_AITER_UNIFIED_ATTN=${SGLANG_USE_AITER_UNIFIED_ATTN}"} \
             ${CUDA_GRAPH_BS_LIST_OVERRIDE:+-e "CUDA_GRAPH_BS_LIST_OVERRIDE=${CUDA_GRAPH_BS_LIST_OVERRIDE}"} \
             ${HICACHE_RATIO:+-e "HICACHE_RATIO=${HICACHE_RATIO}"} \
@@ -330,10 +331,8 @@ else
         _docker_rc=$?
         # Reclaim files created by root-in-container (NFS root_squash maps
         # container-root → nobody uid 65534; runner user can't delete them).
-        # We run a minimal container *as nobody* (uid 65534) to chmod the files
+        # Run a minimal container as nobody (uid 65534) to chmod files
         # world-writable so the runner can git-clean them on the next checkout.
-        # Using --user 65534 means nobody→nobody on the NFS, which has write
-        # access to its own files.  Fallback to $IMAGE if alpine is not cached.
         _CLEANUP_IMAGE="alpine"
         docker image inspect "$_CLEANUP_IMAGE" >/dev/null 2>&1 || \
             docker pull "$_CLEANUP_IMAGE" >/dev/null 2>&1 || \

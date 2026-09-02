@@ -1721,6 +1721,25 @@ glm5.2-fp4-mi355x-sglang-agentic-mtp:
       search-space:
       - { tp: 4, ep: 4, kv-offloading: dram, kv-offload-backend: { name: hicache }, conc-list: [1, 2, 4, 8, 10, 12], spec-decoding: mtp }
       - { tp: 8, ep: 1, kv-offloading: none, conc-list: [4, 10], spec-decoding: mtp }
+# GLM-5.2 FP4 SGLang v0.5.16 with ROCM_QUICK_REDUCE_QUANTIZATION=INT4 (F-2 probe).
+# Quick-reduce INT4 activates only for tensors >= 16 MB (TP4/bf16 threshold).
+# GLM-5.2 hidden=7168 → decode tensors are always too small; only large prefill
+# batches (~4096+ tokens) qualify. Expected impact: modest TTFT reduction at high
+# concurrency (c8-c12); decode/ITL likely unchanged. Requires ROCM_QUICK_REDUCE_QUANTIZATION=INT4
+# and ROCM_QUICK_REDUCE_CAST_BF16_TO_FP16=1 set in runner .env.
+glm5.2-fp4-mi355x-sglang-agentic-mtp-qr-int4:
+  image: lmsysorg/sglang-rocm:v0.5.16-rocm720-mi35x-20260728
+  model: amd/GLM-5.2-MXFP4
+  model-prefix: glm5.2
+  runner: cluster:mi355x-amds
+  precision: fp4
+  framework: sglang
+  multinode: false
+  scenarios:
+    agentic-coding:
+    - dram-utilization: 0.8
+      search-space:
+      - { tp: 4, ep: 4, kv-offloading: dram, kv-offload-backend: { name: hicache }, conc-list: [12], spec-decoding: mtp }
 # GLM-5.2 FP4 agentic-coding benchmark on MI355X via ATOM with MTP speculative
 # decoding. TP4 uses LMCache DRAM offload; TP8 is GPU-resident with no KV offload.
 # Recipe is from PR https://github.com/ROCm/ATOM/pull/1877
