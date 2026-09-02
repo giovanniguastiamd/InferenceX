@@ -309,6 +309,22 @@ jobs:
             done
           fi
 
+      - name: Pre-checkout _work cleanup [local testing]
+        # actions/checkout deletes _work contents as the runner user, which fails
+        # when a previous Docker run left root-owned files (NFS root_squash maps
+        # container-root → nobody; runner user cannot remove them).
+        # This step runs a privileged container to wipe _work before checkout.
+        # No-op if docker is not available or _work is already clean.
+        run: |
+          if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+            docker run --rm \
+              --privileged \
+              -v "${GITHUB_WORKSPACE%/InferenceX/InferenceX}:/work" \
+              ubuntu \
+              bash -c "rm -rf /work/InferenceX 2>/dev/null; true" \
+              2>/dev/null || true
+          fi
+
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           token: ${{ secrets.REPO_PAT }}

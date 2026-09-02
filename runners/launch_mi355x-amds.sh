@@ -185,8 +185,8 @@ PY
                 # Eval artifacts are created as root inside the container; sudo
                 # is required to overwrite any stale root-owned files in the
                 # workspace from prior runs on this runner.
-                if sudo cp "$eval_file" "$eval_dest"; then
-                    sudo chown "$(id -u):$(id -g)" "$eval_dest" 2>/dev/null || true
+                if sudo -n cp "$eval_file" "$eval_dest"; then
+                    sudo -n chown "$(id -u):$(id -g)" "$eval_dest" 2>/dev/null || true
                     echo "Copied eval artifact: $(basename "$eval_file")"
                 else
                     echo "ERROR: failed to copy eval artifact: $(basename "$eval_file")" >&2
@@ -220,9 +220,8 @@ PY
                 echo "Staging agentic raw artifacts from $AGENTIC_SRC"
                 mkdir -p "$GITHUB_WORKSPACE/LOGS/agentic"
                 cp -r "$AGENTIC_SRC"/. "$GITHUB_WORKSPACE/LOGS/agentic/"
-                # Container artifacts arrive root-owned; chown/chmod so git clean
-                # and later jobs (possibly a different runner user) can remove LOGS/.
-                sudo chown -R "$(id -u):$(id -g)" "$GITHUB_WORKSPACE/LOGS" 2>/dev/null || true
+                # Container artifacts arrive root-owned (NFS root_squash).
+                # chmod world-writable directly; chown would require sudo.
                 chmod -R a+rwX "$GITHUB_WORKSPACE/LOGS" 2>/dev/null || true
                 ls -laR "$GITHUB_WORKSPACE/LOGS/agentic"
             else
@@ -251,6 +250,109 @@ PY
     # Log preservation and cleanup handled by EXIT trap (cleanup_and_save_logs)
 
 else
+
+    # ── Docker fallback: used when Slurm (salloc) is not available ───────────
+    # Set FORCE_DOCKER=1 in the runner .env to bypass Slurm even if salloc is
+    # installed (e.g. machines where salloc is present but no cluster partition
+    # is configured).
+    if ! command -v salloc >/dev/null 2>&1 || [[ "${FORCE_DOCKER:-}" == "1" ]]; then
+        # Load runner .env explicitly so vars set there (e.g. bundle tuning knobs)
+        # are available for -e "VAR=${VAR}" forwarding below. GH Actions runner
+        # loads .env into its own process but does NOT export it to subprocesses.
+        _RUNNER_ENV="${GITHUB_WORKSPACE%/*/*/*}/.env"
+        if [[ -f "$_RUNNER_ENV" ]]; then
+            set -a; source "$_RUNNER_ENV"; set +a
+        fi
+        export HF_CACHE_LOCAL="${HOME}/.cache/huggingface"
+        export AIPERF_CACHE_LOCAL="${HOME}/.cache/aiperf-mmap"
+        # Host-side path for the HF hub dataset cache (aiperf traces).
+        # Override via runner .env (e.g. HF_HUB_CACHE_HOST=/mnt/it_share/hf_hub_cache).
+        export HF_HUB_CACHE_HOST="${HF_HUB_CACHE_HOST:-/mnt/hf_hub_cache}"
+        mkdir -p "$HF_CACHE_LOCAL" "$AIPERF_CACHE_LOCAL"
+        export PORT_OFFSET=${RUNNER_NAME: -1}
+        export PORT=$(( 8888 + ${PORT_OFFSET:-0} ))
+        SPEC_SUFFIX=$([[ "$SPEC_DECODING" == "mtp" ]] && printf '_mtp' || printf '')
+        SCRIPT_BASE="${EXP_NAME%%_*}_${PRECISION}_mi355x"
+        SCRIPT_FW="benchmarks/single_node/${SCENARIO_SUBDIR:-fixed_seq_len/}${SCRIPT_BASE}_${FRAMEWORK}${SPEC_SUFFIX}.sh"
+        SCRIPT_FALLBACK="benchmarks/single_node/${SCENARIO_SUBDIR:-fixed_seq_len/}${SCRIPT_BASE}${SPEC_SUFFIX}.sh"
+        if [[ -f "$SCRIPT_FW" ]]; then
+            BENCHMARK_SCRIPT="$SCRIPT_FW"
+        else
+            BENCHMARK_SCRIPT="$SCRIPT_FALLBACK"
+        fi
+        # Make the workspace and results dir world-writable on the HOST so that
+        # the container running as root (NFS root_squash maps root→nobody) can
+        # write both the result JSON (written to /workspace directly) and the
+        # per-run results subdir (/workspace/results).
+        chmod 777 "${GITHUB_WORKSPACE}"
+        mkdir -p "${GITHUB_WORKSPACE}/results"
+        chmod 777 "${GITHUB_WORKSPACE}/results"
+        set -x
+        docker pull "$IMAGE"
+        docker run --rm \
+            --privileged \
+            --network=host \
+            --ipc=host \
+            -w /workspace \
+            -v "${GITHUB_WORKSPACE}:/workspace" \
+            -v "${HF_CACHE_LOCAL}:/root/.cache/huggingface" \
+            -v "${AIPERF_CACHE_LOCAL}:/aiperf_mmap_cache" \
+            ${MODEL_PATH:+-v "${MODEL_PATH}:${MODEL_PATH}"} \
+            -v "${HF_HUB_CACHE_HOST}:/mnt/hf_hub_cache" \
+            -e MODEL -e MODEL_NAME -e PRECISION -e FRAMEWORK \
+            -e TP -e EP_SIZE -e DP_ATTENTION -e CONC \
+            -e KV_OFFLOADING -e KV_OFFLOAD_BACKEND -e KV_OFFLOAD_BACKEND_METADATA \
+            -e TOTAL_CPU_DRAM_GB -e DURATION \
+            -e RESULT_DIR -e SPEC_DECODING -e DISAGG \
+            -e SCENARIO_TYPE -e SCENARIO_SUBDIR -e IS_AGENTIC \
+            -e "RUN_EVAL=${RUN_EVAL:-false}" \
+            -e "EVAL_ONLY=${EVAL_ONLY:-false}" \
+            -e EVAL_LIMIT \
+            -e "AIPERF_EXPERIMENTAL_FAST=${AIPERF_EXPERIMENTAL_FAST:-0}" \
+            -e "AIPERF_FAILED_REQUEST_THRESHOLD=${AIPERF_FAILED_REQUEST_THRESHOLD:-0.10}" \
+            -e AIPERF_DATASET_MMAP_CACHE_DIR=/aiperf_mmap_cache \
+            -e HF_HOME=/root/.cache/huggingface \
+            -e HF_HUB_CACHE \
+            ${MODEL_PATH:+-e MODEL_PATH} \
+            -e PORT \
+            -e RUNNER_NAME \
+            -e RESULT_FILENAME \
+            -e PYTHONDONTWRITEBYTECODE=1 \
+            -e PYTHONPYCACHEPREFIX=/tmp/inferencex-pycache \
+            ${CHUNKED_PREFILL_SIZE_OVERRIDE:+-e "CHUNKED_PREFILL_SIZE_OVERRIDE=${CHUNKED_PREFILL_SIZE_OVERRIDE}"} \
+            ${ROCM_QUICK_REDUCE_QUANTIZATION:+-e "ROCM_QUICK_REDUCE_QUANTIZATION=${ROCM_QUICK_REDUCE_QUANTIZATION}"} \
+            ${SGLANG_USE_AITER_UNIFIED_ATTN:+-e "SGLANG_USE_AITER_UNIFIED_ATTN=${SGLANG_USE_AITER_UNIFIED_ATTN}"} \
+            ${CUDA_GRAPH_BS_LIST_OVERRIDE:+-e "CUDA_GRAPH_BS_LIST_OVERRIDE=${CUDA_GRAPH_BS_LIST_OVERRIDE}"} \
+            ${HICACHE_RATIO:+-e "HICACHE_RATIO=${HICACHE_RATIO}"} \
+            ${HICACHE_WRITE_POLICY:+-e "HICACHE_WRITE_POLICY=${HICACHE_WRITE_POLICY}"} \
+            "$IMAGE" \
+            bash "$BENCHMARK_SCRIPT"
+        _docker_rc=$?
+        # Reclaim files created by root-in-container (NFS root_squash maps
+        # container-root → nobody uid 65534; runner user can't delete them).
+        # We run a minimal container *as nobody* (uid 65534) to chmod the files
+        # world-writable so the runner can git-clean them on the next checkout.
+        # Using --user 65534 means nobody→nobody on the NFS, which has write
+        # access to its own files.  Fallback to $IMAGE if alpine is not cached.
+        _CLEANUP_IMAGE="alpine"
+        docker image inspect "$_CLEANUP_IMAGE" >/dev/null 2>&1 || \
+            docker pull "$_CLEANUP_IMAGE" >/dev/null 2>&1 || \
+            _CLEANUP_IMAGE="$IMAGE"
+        docker run --rm \
+            --user 65534:65534 \
+            -v "${GITHUB_WORKSPACE}:${GITHUB_WORKSPACE}" \
+            "$_CLEANUP_IMAGE" \
+            sh -c "chmod -R a+rwX \
+                    '${GITHUB_WORKSPACE}/results' \
+                    '${GITHUB_WORKSPACE}/LOGS' \
+                    2>/dev/null; \
+                   find '${GITHUB_WORKSPACE}' -maxdepth 1 -name '*.json' \
+                    -exec chmod a+rw {} + 2>/dev/null; \
+                   true" \
+            2>/dev/null || true
+        exit $_docker_rc
+    fi
+    # ── End Docker fallback ──────────────────────────────────────────────────
 
     export HF_HUB_CACHE_MOUNT="/var/lib/hf-hub-cache/"
     export AIPERF_MMAP_CACHE_HOST_PATH="/it-share/aiperf-cache/"
