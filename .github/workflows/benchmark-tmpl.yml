@@ -319,11 +319,13 @@ jobs:
         run: |
           if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
             RUNNER_WORK="${GITHUB_WORKSPACE%/InferenceX/InferenceX}"
+            # Remove root-owned files, then recreate the workspace dir so the
+            # runner can cd into it before actions/checkout runs.
             docker run --rm \
               --privileged \
               -v "${RUNNER_WORK}:/work" \
               ubuntu \
-              bash -c "rm -rf /work/InferenceX 2>/dev/null; true" \
+              bash -c "rm -rf /work/InferenceX 2>/dev/null; mkdir -p /work/InferenceX/InferenceX; chmod -R 777 /work/InferenceX; true" \
               2>/dev/null || true
           fi
 
