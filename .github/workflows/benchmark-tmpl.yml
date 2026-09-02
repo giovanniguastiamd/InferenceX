@@ -310,21 +310,20 @@ jobs:
           fi
 
       - name: Pre-checkout _work cleanup [local testing]
-        # actions/checkout deletes _work contents as the runner user, which fails
+        # actions/checkout deletes _work/InferenceX as the runner user, which fails
         # when a previous Docker run left root-owned files (NFS root_squash maps
         # container-root → nobody; runner user cannot remove them).
-        # Mount the runner root (strip everything from /_work onward) and wipe
-        # _work entirely, equivalent to the manual recovery command:
-        #   cd <runner-root> && docker run --rm -v "$(pwd)":/w ubuntu bash -c "rm -rf /w/_work"
+        # Fix: mount _work/ and remove only InferenceX/ inside it, preserving
+        # _work/_actions (cached action JS bundles needed by the runner).
         # No-op if docker is not available (SLURM clusters without Docker fallback).
         run: |
           if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
-            RUNNER_ROOT="${GITHUB_WORKSPACE%%/_work*}"
+            RUNNER_WORK="${GITHUB_WORKSPACE%/InferenceX/InferenceX}"
             docker run --rm \
               --privileged \
-              -v "${RUNNER_ROOT}:/runner" \
+              -v "${RUNNER_WORK}:/work" \
               ubuntu \
-              bash -c "rm -rf /runner/_work 2>/dev/null; true" \
+              bash -c "rm -rf /work/InferenceX 2>/dev/null; true" \
               2>/dev/null || true
           fi
 
