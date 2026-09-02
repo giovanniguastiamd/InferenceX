@@ -313,15 +313,18 @@ jobs:
         # actions/checkout deletes _work contents as the runner user, which fails
         # when a previous Docker run left root-owned files (NFS root_squash maps
         # container-root → nobody; runner user cannot remove them).
-        # This step runs a privileged container to wipe _work before checkout.
-        # No-op if docker is not available or _work is already clean.
+        # Mount the runner root (strip everything from /_work onward) and wipe
+        # _work entirely, equivalent to the manual recovery command:
+        #   cd <runner-root> && docker run --rm -v "$(pwd)":/w ubuntu bash -c "rm -rf /w/_work"
+        # No-op if docker is not available (SLURM clusters without Docker fallback).
         run: |
           if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+            RUNNER_ROOT="${GITHUB_WORKSPACE%%/_work*}"
             docker run --rm \
               --privileged \
-              -v "${GITHUB_WORKSPACE%/InferenceX/InferenceX}:/work" \
+              -v "${RUNNER_ROOT}:/runner" \
               ubuntu \
-              bash -c "rm -rf /work/InferenceX 2>/dev/null; true" \
+              bash -c "rm -rf /runner/_work 2>/dev/null; true" \
               2>/dev/null || true
           fi
 
