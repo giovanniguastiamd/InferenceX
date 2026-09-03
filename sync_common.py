@@ -53,11 +53,13 @@ def read_gitcommon():
     if not gitcommon.exists():
         print(f"Error: {gitcommon} not found in {Path.cwd()}", file=sys.stderr)
         sys.exit(1)
-    return [
-        line.strip()
-        for line in gitcommon.read_text(encoding="utf-8").splitlines()
-        if line.strip() and not line.strip().startswith("#")
-    ]
+    seen, files = set(), []
+    for line in gitcommon.read_text(encoding="utf-8").splitlines():
+        f = line.strip()
+        if f and not f.startswith("#") and f not in seen:
+            seen.add(f)
+            files.append(f)
+    return files
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +128,26 @@ def do_push(target_branches, dry_run):
             return
         print()
 
+    # Read file contents into memory BEFORE stashing (works for both tracked and untracked files)
+    file_contents: dict[str, bytes] = {}
+    missing = []
+    for f in files:
+        p = Path(f)
+        if p.exists():
+            file_contents[f] = p.read_bytes()
+        else:
+            missing.append(f)
+    if missing:
+        print(f"Warning: the following files don't exist in the working directory and will be skipped:")
+        for f in missing:
+            print(f"  {f}")
+        files = [f for f in files if f not in missing]
+        print()
+
+    if not files:
+        print("No files to push.")
+        return
+
     # Stash any uncommitted changes so we can freely switch branches
     stashed = False
     if not dry_run:
@@ -143,13 +165,19 @@ def do_push(target_branches, dry_run):
             print(f"--- {branch} ---")
             if dry_run:
                 print(f"  [dry-run] checkout {branch}")
-                print(f"  [dry-run] git checkout {source} -- {' '.join(files)}")
-                print(f"  [dry-run] git commit -m 'chore: sync common files from {source}'")
-                print(f"  [dry-run] checkout {source}")
+                for f in files:
+                    print(f"  [dry-run] write {f} ({len(file_contents[f])} bytes)")
+                print(f"  [dry-run] git add + commit")
                 continue
 
             git("checkout", branch)
-            git("checkout", source, "--", *files)
+
+            # Write files directly from in-memory contents (works for untracked too)
+            for f, content in file_contents.items():
+                Path(f).parent.mkdir(parents=True, exist_ok=True)
+                Path(f).write_bytes(content)
+
+            git("add", "--", *files)
 
             # Check if there is anything to commit
             diff = subprocess.run(
