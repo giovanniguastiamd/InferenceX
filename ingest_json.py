@@ -1,286 +1,260 @@
 #!/usr/bin/env python3
 """
-ingest_json.py — append a benchmark run row to InferenceX_GLM-5.2_interactivity.csv
+ingest_json.py — append benchmark JSON artifacts to progress.csv.
 
-Usage examples
---------------
-# From a local agg_bmk.json:
-  python ingest_json.py --json /path/to/agg_bmk.json --run-id 33724174688 --dataset-ok
+Reads one or more bmk_agentic JSON files produced by the InferenceX pipeline
+and appends the extracted metrics as new rows to progress.csv.
 
-# From a GH Actions artifact (requires `gh` CLI authenticated):
-  python ingest_json.py --gh-run 33724174688 --artifact agg_bmk --dataset-ok
-
-# Write to a specific CSV (default: InferenceX_GLM-5.2_interactivity.csv):
-  python ingest_json.py --json agg_bmk.json --run-id 33724174688 --csv my.csv
-
-# Dry-run (print row, do not write):
-  python ingest_json.py --json agg_bmk.json --run-id 33724174688 --dry-run
-
-Notes
+Usage
 -----
-- agg_bmk.json is produced by benchmarks/single_node/agentic/*.sh and then
-  collected by the GitHub Actions `collect-evals` step.  The top-level keys
-  used here are:
-    request_metrics.{mean,median,p90,p99}_itl_token_latency_s   (ITL in seconds)
-    request_metrics.p90_interactivity_tok_s_user                  (P90 interactivity)
-    output_throughput_per_chip                                     (tok/s / GPU)
-    concurrency                                                    (int)
-    tp                                                             (TP group size)
-    ep                                                             (EP value)
-    date                                                           (ISO date string)
-    infmax_model_prefix / dataset.loader                           (for dataset_ok check)
+    # Single file:
+    python ingest_json.py path/to/conc8.json --run-id 33724174688 --runner mi355x-amds_03
 
-- dataset_ok heuristic (if --dataset-ok / --no-dataset-ok not given explicitly):
-    True  if infmax_model_prefix is set (non-empty) in the JSON
-    False otherwise (falls back to 256k-capped dataset)
+    # Directory of JSON files (one per CONC point):
+    python ingest_json.py C:\\tmp\\run_data --run-id 33724174688 --runner mi355x-amds_03 --image lmsysorg/sglang-rocm:v0.5.16-rocm720-mi35x-20260728
 
-- The script appends a SINGLE row per invocation.  For a multi-CONC sweep,
-  run once per CONC point (the JSON contains one CONC at a time).
+    # Dry-run (print rows, don't write):
+    python ingest_json.py path/to/dir --run-id 33724174688 --dry-run
 
-Column mapping
---------------
-Columns 1-43 match the upstream CSV exactly; columns 44-45 are the two new ones:
-  44  ITL P90 (s)
-  45  dataset_ok
+Options
+-------
+    --run-id        GitHub Actions run ID (e.g. 33724174688).
+    --branch        Branch name. Defaults to current git branch.
+    --runner        Runner label (e.g. mi355x-amds_03).
+    --image         Docker image tag.
+    --notes         Free-text notes appended to each row.
+    --dataset-ok    Override dataset_ok: true / false / auto (default: auto).
+                    auto = True if loader does NOT contain '_256k'.
+    --csv           Target CSV file (default: progress.csv).
+    --dry-run       Print rows without writing.
+
+JSON field mapping
+------------------
+    conc                                    → conc, max_running_requests
+    tp, ep                                  → tp, ep
+    kv_offloading                           → kv_offload
+    spec_decoding                           → mtp
+    framework                               → framework
+    num_requests_successful                 → requests_ok
+    request_metrics.throughput.duration_seconds       → duration_s
+    request_metrics.throughput.per_gpu.total_tput_tps → throughput_per_gpu_tps
+    request_metrics.throughput.output.tokens_per_second → output_tps
+    request_metrics.latency.ttft.{mean,p50,p90}        → ttft_{mean,p50,p90}_s
+    request_metrics.latency.itl.{mean,p50,p90} × 1000  → itl_{mean,p50,p90}_ms
+    request_metrics.latency.intvty.{mean,p50,p90}       → intvty_{mean,p50,p90}
+    server_metrics.cache.gpu_cache_hit_rate              → gpu_cache_hit_rate
+    server_metrics.cache.cpu_cache_hit_rate              → cpu_cache_hit_rate
+    server_metrics.kv_cache.gpu_usage_pct                → kv_gpu_usage_pct
+    server_metrics.kv_cache.cpu_usage_pct                → kv_cpu_usage_pct
+    dataset.loader (no '_256k') → dataset_ok=True
 """
 
 import argparse
 import csv
 import json
-import os
-import re
+import pathlib
 import subprocess
 import sys
-import tempfile
-from pathlib import Path
+from datetime import date
 
-CSV_PATH = Path(__file__).parent / "InferenceX_GLM-5.2_interactivity.csv"
-
-# Upstream CSV has 43 columns + 2 new = 45 total.
-# We reconstruct the row with empty strings for columns we don't fill.
-N_COLS = 45  # header column count (0-indexed: 0..44)
-
-# Column indices (0-based) for fields we fill:
-COL_MODEL       = 0   # "GLM-5.2"
-COL_HARDWARE    = 3   # "mi355x"
-COL_HW_KEY      = 4   # e.g. "mi355x_sglang_mia1"
-COL_FRAMEWORK   = 5   # "sglang"
-COL_PRECISION   = 6   # "fp4"
-COL_TP          = 7
-COL_CONCURRENCY = 8
-COL_DATE        = 9
-COL_P90_INTVTY  = 11  # P90 Interactivity (tok/s/user)
-COL_OUT_TPUT    = 13  # Output Throughput/Chip (tok/s)
-COL_MEAN_ITL    = 27  # Mean ITL (s)
-COL_MED_ITL     = 28  # Median ITL (s)
-COL_P99_ITL     = 29  # P99 ITL (s)
-COL_STD_ITL     = 30  # Std ITL (s)
-COL_DISAGG      = 34  # "false"
-COL_SPEC_DEC    = 37  # "mtp"
-COL_EP          = 38  # EP
-COL_DP_ATTN     = 39  # "false"
-COL_MULTINODE   = 40  # "false"
-COL_RUN_URL     = 41  # Run URL
-COL_ITL_P90     = 42  # ITL P90 (s)   ← new
-COL_DATASET_OK  = 43  # dataset_ok    ← new
-
-
+# ---------------------------------------------------------------------------
+# CSV schema — must match gen_progress_csv.py HEADER exactly
+# ---------------------------------------------------------------------------
+HEADER = [
+    "date", "run_id", "job_url", "branch", "runner", "image", "framework",
+    "tp", "ep", "conc", "max_running_requests", "chunked_prefill_size",
+    "kv_offload", "hicache_ratio", "mtp", "spec_steps", "spec_draft_tokens",
+    "duration_s", "requests_ok", "throughput_per_gpu_tps", "output_tps",
+    "ttft_mean_s", "ttft_p50_s", "ttft_p90_s",
+    "itl_mean_ms", "itl_p50_ms", "itl_p90_ms",
+    "intvty_mean", "intvty_p50", "intvty_p90",
+    "gpu_cache_hit_rate", "cpu_cache_hit_rate", "kv_gpu_usage_pct", "kv_cpu_usage_pct",
+    "dataset_ok", "notes",
+]
 GH_BASE = "https://github.com/giovanniguastiamd/InferenceX/actions/runs"
 
 
-def _gh_url(run_id: str) -> str:
-    return f"{GH_BASE}/{run_id}"
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _g(d, *keys, default=None):
+    """Safe nested dict access."""
+    for k in keys:
+        if not isinstance(d, dict):
+            return default
+        d = d.get(k)
+        if d is None:
+            return default
+    return d
 
 
-def download_artifact(run_id: str, artifact_name: str) -> Path:
-    """Download a GH Actions artifact and return path to extracted directory."""
-    with tempfile.TemporaryDirectory(prefix="ingest_", delete=False) as tmpdir:
-        cmd = [
-            "gh", "run", "download", run_id,
-            "--name", artifact_name,
-            "--dir", tmpdir,
-            "--repo", "giovanniguastiamd/InferenceX",
-        ]
-        print(f"[ingest] Downloading artifact '{artifact_name}' from run {run_id}…")
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            print(f"[ingest] gh error:\n{result.stderr}", file=sys.stderr)
-            sys.exit(1)
-        # Find the JSON file inside the extracted dir
-        matches = list(Path(tmpdir).rglob("*.json"))
-        if not matches:
-            print(f"[ingest] No JSON found in artifact '{artifact_name}'", file=sys.stderr)
-            sys.exit(1)
-        if len(matches) > 1:
-            print(f"[ingest] Multiple JSON files found; using first: {matches[0]}")
-        return matches[0]
+def _r(v, n=5):
+    """Round to n decimal places, return empty string on None."""
+    if v is None:
+        return ""
+    try:
+        return round(float(v), n)
+    except (TypeError, ValueError):
+        return ""
 
 
-def load_json(path: Path) -> dict:
-    with open(path, encoding="utf-8") as f:
-        return json.load(f)
+def current_branch() -> str:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"], text=True
+        ).strip()
+    except Exception:
+        return ""
 
 
-def detect_dataset_ok(data: dict) -> bool:
-    """
-    Return True if the JSON indicates the full unfiltered dataset was used.
-    Heuristic: infmax_model_prefix is a non-empty string in the JSON.
-    """
-    prefix = data.get("infmax_model_prefix", "") or ""
-    return bool(prefix.strip())
+def detect_dataset_ok(artifact: dict) -> bool:
+    loader = (_g(artifact, "dataset", "loader") or "")
+    return "_256k" not in loader
 
 
-def extract_row(data: dict, run_id: str, dataset_ok: bool) -> list:
-    """
-    Build a 45-element list (one per CSV column) from the JSON data.
-    Empty strings for columns we don't fill.
-    """
-    row = [""] * N_COLS
+# ---------------------------------------------------------------------------
+# Row extraction
+# ---------------------------------------------------------------------------
 
-    req = data.get("request_metrics", {})
-    conc = data.get("concurrency", "")
-    tp   = data.get("tp", "")
-    ep   = data.get("ep", "")
-    date = (data.get("date") or data.get("run_date") or "")[:10]   # ISO date, trim time
+def extract_row(artifact: dict, *, run_id: str, branch: str, runner: str,
+                image: str, notes: str, dataset_ok_override) -> dict:
+    rm    = artifact.get("request_metrics", {})
+    sm    = artifact.get("server_metrics", {})
+    lat   = rm.get("latency", {})
+    tput  = rm.get("throughput", {})
+    ttft  = lat.get("ttft", {})
+    itl   = lat.get("itl", {})
+    intvty = lat.get("intvty", {})
+    per_gpu = _g(tput, "per_gpu") or {}
+    cache   = sm.get("cache", {})
+    kv_c    = sm.get("kv_cache", {})
 
-    p90_intvty = req.get("p90_interactivity_tok_s_user", "")
-    out_tput   = data.get("output_throughput_per_chip", "")
+    # dataset_ok
+    if dataset_ok_override is None:
+        dok = detect_dataset_ok(artifact)
+    else:
+        dok = dataset_ok_override
 
-    mean_itl = req.get("mean_itl_token_latency_s", "")
-    med_itl  = req.get("median_itl_token_latency_s", "")
-    p90_itl  = req.get("p90_itl_token_latency_s", "")
-    p99_itl  = req.get("p99_itl_token_latency_s", "")
-    std_itl  = req.get("std_itl_token_latency_s", "")
+    img = image or (artifact.get("image") or "")
+    spec = artifact.get("spec_decoding") or ""
+    mtp_val = spec if spec else ""
 
-    hw_key = "mi355x_sglang_mia1"
-    if tp and int(tp) == 4:
-        hw_key = "mi355x_sglang_mia1_tp4"
-
-    row[COL_MODEL]       = "GLM-5.2"
-    row[COL_HARDWARE]    = "mi355x"
-    row[COL_HW_KEY]      = hw_key
-    row[COL_FRAMEWORK]   = "sglang"
-    row[COL_PRECISION]   = "fp4"
-    row[COL_TP]          = str(tp)
-    row[COL_CONCURRENCY] = str(conc)
-    row[COL_DATE]        = date
-    row[COL_P90_INTVTY]  = "" if p90_intvty == "" else str(p90_intvty)
-    row[COL_OUT_TPUT]    = "" if out_tput == "" else str(out_tput)
-    row[COL_MEAN_ITL]    = "" if mean_itl == "" else str(mean_itl)
-    row[COL_MED_ITL]     = "" if med_itl  == "" else str(med_itl)
-    row[COL_P99_ITL]     = "" if p99_itl  == "" else str(p99_itl)
-    row[COL_STD_ITL]     = "" if std_itl  == "" else str(std_itl)
-    row[COL_DISAGG]      = "false"
-    row[COL_SPEC_DEC]    = "mtp"
-    row[COL_EP]          = str(ep)
-    row[COL_DP_ATTN]     = "false"
-    row[COL_MULTINODE]   = "false"
-    row[COL_RUN_URL]     = _gh_url(run_id)
-    row[COL_ITL_P90]     = "" if p90_itl == "" else str(p90_itl)
-    row[COL_DATASET_OK]  = "True" if dataset_ok else "False"
-
-    return row
-
-
-def read_header(csv_path: Path) -> list[str]:
-    """Return the header row (skipping # comment lines)."""
-    with open(csv_path, encoding="utf-8", newline="") as f:
-        for line in f:
-            if not line.startswith("#"):
-                return next(csv.reader([line.rstrip("\n")]))
-    raise ValueError(f"No header found in {csv_path}")
+    r = {k: "" for k in HEADER}
+    r.update({
+        "date":                  str(date.today()),
+        "run_id":                run_id or "",
+        "job_url":               f"{GH_BASE}/{run_id}" if run_id else "",
+        "branch":                branch or "",
+        "runner":                runner or "",
+        "image":                 img,
+        "framework":             artifact.get("framework") or "sglang",
+        "tp":                    artifact.get("tp", ""),
+        "ep":                    artifact.get("ep", ""),
+        "conc":                  artifact.get("conc", ""),
+        "max_running_requests":  artifact.get("conc", ""),
+        "kv_offload":            artifact.get("kv_offloading") or "none",
+        "mtp":                   mtp_val,
+        "duration_s":            _r(_g(tput, "duration_seconds"), 2),
+        "requests_ok":           artifact.get("num_requests_successful", ""),
+        "throughput_per_gpu_tps": _r(_g(per_gpu, "total_tput_tps"), 2),
+        "output_tps":            _r(_g(tput, "output", "tokens_per_second"), 2),
+        "ttft_mean_s":           _r(ttft.get("mean"), 5),
+        "ttft_p50_s":            _r(ttft.get("p50"), 5),
+        "ttft_p90_s":            _r(ttft.get("p90"), 5),
+        "itl_mean_ms":           _r((itl.get("mean") or 0) * 1000, 3),
+        "itl_p50_ms":            _r((itl.get("p50") or 0) * 1000, 3),
+        "itl_p90_ms":            _r((itl.get("p90") or 0) * 1000, 3),
+        "intvty_mean":           _r(intvty.get("mean"), 3),
+        "intvty_p50":            _r(intvty.get("p50"), 3),
+        "intvty_p90":            _r(intvty.get("p90"), 3),
+        "gpu_cache_hit_rate":    _r(cache.get("gpu_cache_hit_rate"), 4),
+        "cpu_cache_hit_rate":    _r(cache.get("cpu_cache_hit_rate"), 4),
+        "kv_gpu_usage_pct":      _r(kv_c.get("gpu_usage_pct"), 4),
+        "kv_cpu_usage_pct":      _r(kv_c.get("cpu_usage_pct"), 4),
+        "dataset_ok":            str(dok),
+        "notes":                 notes or "",
+    })
+    return r
 
 
-def append_row(csv_path: Path, row: list, dry_run: bool = False) -> None:
-    header = read_header(csv_path)
-    if len(row) != len(header):
-        print(
-            f"[ingest] WARNING: row has {len(row)} cols, header has {len(header)} cols",
-            file=sys.stderr,
-        )
-    line = ",".join(str(v) for v in row)
-    if dry_run:
-        print("[dry-run] Would append:")
-        print(line)
-        return
-    with open(csv_path, "a", encoding="utf-8", newline="") as f:
-        f.write(line + "\n")
-    print(f"[ingest] Appended row to {csv_path}")
-
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    src = parser.add_mutually_exclusive_group(required=True)
-    src.add_argument("--json", metavar="FILE",
-                     help="Path to agg_bmk.json artifact")
-    src.add_argument("--gh-run", metavar="RUN_ID",
-                     help="GH Actions run ID; artifact downloaded via `gh` CLI")
-
-    parser.add_argument("--artifact", metavar="NAME", default="agg_bmk",
-                        help="Artifact name to download (default: agg_bmk)")
-    parser.add_argument("--run-id", metavar="RUN_ID",
-                        help="GH Actions run ID (required when using --json)")
-    parser.add_argument("--dataset-ok", dest="dataset_ok", action="store_true",
-                        default=None,
-                        help="Mark row as correct dataset (overrides JSON heuristic)")
-    parser.add_argument("--no-dataset-ok", dest="dataset_ok", action="store_false",
-                        help="Mark row as 256k-capped dataset (overrides JSON heuristic)")
-    parser.add_argument("--csv", metavar="FILE", default=str(CSV_PATH),
-                        help=f"Target CSV file (default: {CSV_PATH.name})")
+    parser.add_argument("path", type=pathlib.Path,
+                        help="JSON file or directory of JSON files.")
+    parser.add_argument("--run-id",  default="",  help="GitHub Actions run ID.")
+    parser.add_argument("--branch",  default="",  help="Branch name (default: current branch).")
+    parser.add_argument("--runner",  default="",  help="Runner label (e.g. mi355x-amds_03).")
+    parser.add_argument("--image",   default="",  help="Docker image tag.")
+    parser.add_argument("--notes",   default="",  help="Free-text notes.")
+    parser.add_argument("--dataset-ok", default="auto", choices=["auto", "true", "false"],
+                        help="Override dataset_ok. auto=detect from loader name (default).")
+    parser.add_argument("--csv", type=pathlib.Path, default=pathlib.Path("progress.csv"),
+                        help="Target CSV file (default: progress.csv).")
     parser.add_argument("--dry-run", action="store_true",
-                        help="Print the row but do not write to CSV")
+                        help="Print rows without writing.")
     args = parser.parse_args()
 
-    # Resolve JSON path
-    if args.gh_run:
-        run_id = args.gh_run
-        json_path = download_artifact(run_id, args.artifact)
-    else:
-        json_path = Path(args.json)
-        if not json_path.exists():
-            print(f"[ingest] File not found: {json_path}", file=sys.stderr)
-            sys.exit(1)
-        run_id = args.run_id
-        if not run_id:
-            # Try to infer from parent directory name if it looks like a run ID
-            parent = json_path.parent.name
-            if re.fullmatch(r"\d{8,}", parent):
-                run_id = parent
-                print(f"[ingest] Inferred run_id={run_id} from directory name")
-            else:
-                print("[ingest] --run-id is required when using --json", file=sys.stderr)
-                sys.exit(1)
+    branch = args.branch or current_branch()
+    dok_override = None if args.dataset_ok == "auto" else (args.dataset_ok == "true")
 
-    data = load_json(json_path)
+    # Collect JSON files
+    p = args.path
+    json_files = sorted(p.rglob("*.json")) if p.is_dir() else [p]
+    if not json_files:
+        print(f"No JSON files found at: {p}", file=sys.stderr)
+        sys.exit(1)
 
-    # dataset_ok: explicit flag > JSON heuristic
-    if args.dataset_ok is None:
-        dataset_ok = detect_dataset_ok(data)
-        src_str = "JSON heuristic"
-    else:
-        dataset_ok = args.dataset_ok
-        src_str = "CLI flag"
-    print(f"[ingest] dataset_ok={dataset_ok}  (source: {src_str})")
+    rows = []
+    for f in json_files:
+        try:
+            artifact = json.loads(f.read_text(encoding="utf-8"))
+        except Exception as e:
+            print(f"Warning: skipping {f.name}: {e}", file=sys.stderr)
+            continue
 
-    row = extract_row(data, run_id, dataset_ok)
+        row = extract_row(
+            artifact,
+            run_id=args.run_id,
+            branch=branch,
+            runner=args.runner,
+            image=args.image,
+            notes=args.notes,
+            dataset_ok_override=dok_override,
+        )
+        rows.append(row)
+        print(
+            f"  conc={row['conc']:>3}  tp={row['tp']}  ep={row['ep']}"
+            f"  ITL_p90={row['itl_p90_ms']:>6}ms"
+            f"  intvty_p90={row['intvty_p90']:>7}"
+            f"  output_tps={row['output_tps']:>8}"
+            f"  dataset_ok={row['dataset_ok']}"
+        )
 
-    csv_path = Path(args.csv)
-    append_row(csv_path, row, dry_run=args.dry_run)
+    if not rows:
+        print("No rows extracted.")
+        return
 
-    # Summary
-    conc = row[COL_CONCURRENCY]
-    tp   = row[COL_TP]
-    intvty = row[COL_P90_INTVTY]
-    tput   = row[COL_OUT_TPUT]
-    itl90  = row[COL_ITL_P90]
-    print(
-        f"[ingest] run={run_id}  CONC={conc}  TP={tp}  "
-        f"P90_intvty={intvty}  out_tput/chip={tput}  ITL_p90={itl90}  "
-        f"dataset_ok={dataset_ok}"
-    )
+    if args.dry_run:
+        print(f"\n[dry-run] Would append {len(rows)} row(s) to {args.csv}")
+        return
+
+    csv_exists = args.csv.exists()
+    with args.csv.open("a", newline="", encoding="utf-8") as fh:
+        writer = csv.writer(fh)
+        if not csv_exists:
+            writer.writerow(HEADER)
+        for r in rows:
+            writer.writerow([r[k] for k in HEADER])
+
+    print(f"\nAppended {len(rows)} row(s) to {args.csv}")
 
 
 if __name__ == "__main__":
