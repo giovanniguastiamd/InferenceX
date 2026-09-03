@@ -2,59 +2,45 @@
 """
 ingest_json.py — append benchmark JSON artifacts to progress.csv.
 
-Reads one or more bmk_agentic JSON files produced by the InferenceX pipeline
-and appends the extracted metrics as new rows to progress.csv.
+Two modes
+---------
+A) From a GitHub Actions run (downloads automatically):
 
-Usage
------
-    # Single file:
-    python ingest_json.py path/to/conc8.json --run-id 33724174688 --runner mi355x-amds_03
+    python ingest_json.py --gh-run 33724174688
 
-    # Directory of JSON files (one per CONC point):
-    python ingest_json.py C:\\tmp\\run_data --run-id 33724174688 --runner mi355x-amds_03 --image lmsysorg/sglang-rocm:v0.5.16-rocm720-mi35x-20260728
+B) From a local directory or single file:
 
-    # Dry-run (print rows, don't write):
-    python ingest_json.py path/to/dir --run-id 33724174688 --dry-run
+    python ingest_json.py C:\\path\\to\\dir
 
-Options
--------
-    --run-id        GitHub Actions run ID (e.g. 33724174688).
-    --branch        Branch name. Defaults to current git branch.
-    --runner        Runner label (e.g. mi355x-amds_03).
-    --image         Docker image tag.
-    --notes         Free-text notes appended to each row.
-    --dataset-ok    Override dataset_ok: true / false / auto (default: auto).
-                    auto = True if loader does NOT contain '_256k'.
-    --csv           Target CSV file (default: progress.csv).
-    --dry-run       Print rows without writing.
+Auto-detected fields (from JSON or GitHub API, no flags needed)
+---------------------------------------------------------------
+    runner      Extracted from artifact directory name  (e.g. mi355x-amds_03)
+    image       Extracted from GH job name              (e.g. lmsysorg/sglang-rocm:...)
+    branch      Current git branch
+    dataset_ok  True if dataset.loader does not contain '_256k'
 
-JSON field mapping
+Optional overrides
 ------------------
-    conc                                    → conc, max_running_requests
-    tp, ep                                  → tp, ep
-    kv_offloading                           → kv_offload
-    spec_decoding                           → mtp
-    framework                               → framework
-    num_requests_successful                 → requests_ok
-    request_metrics.throughput.duration_seconds       → duration_s
-    request_metrics.throughput.per_gpu.total_tput_tps → throughput_per_gpu_tps
-    request_metrics.throughput.output.tokens_per_second → output_tps
-    request_metrics.latency.ttft.{mean,p50,p90}        → ttft_{mean,p50,p90}_s
-    request_metrics.latency.itl.{mean,p50,p90} × 1000  → itl_{mean,p50,p90}_ms
-    request_metrics.latency.intvty.{mean,p50,p90}       → intvty_{mean,p50,p90}
-    server_metrics.cache.gpu_cache_hit_rate              → gpu_cache_hit_rate
-    server_metrics.cache.cpu_cache_hit_rate              → cpu_cache_hit_rate
-    server_metrics.kv_cache.gpu_usage_pct                → kv_gpu_usage_pct
-    server_metrics.kv_cache.cpu_usage_pct                → kv_cpu_usage_pct
-    dataset.loader (no '_256k') → dataset_ok=True
+    --runner LABEL      Override auto-detected runner.
+    --image  TAG        Override auto-detected image.
+    --branch NAME       Override branch (default: current git branch).
+    --notes  TEXT       Free-text notes appended to each row.
+    --dataset-ok        Force dataset_ok=True.
+    --no-dataset-ok     Force dataset_ok=False.
+    --csv    FILE       Target CSV (default: progress.csv).
+    --dry-run           Print rows without writing.
+    --repo   OWNER/REPO GitHub repo (default: giovanniguastiamd/InferenceX).
 """
 
 import argparse
 import csv
 import json
+import os
 import pathlib
+import re
 import subprocess
 import sys
+import tempfile
 from datetime import date
 
 # ---------------------------------------------------------------------------
@@ -71,7 +57,8 @@ HEADER = [
     "gpu_cache_hit_rate", "cpu_cache_hit_rate", "kv_gpu_usage_pct", "kv_cpu_usage_pct",
     "dataset_ok", "notes",
 ]
-GH_BASE = "https://github.com/giovanniguastiamd/InferenceX/actions/runs"
+
+GH_BASE = "https://github.com/{repo}/actions/runs"
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +66,6 @@ GH_BASE = "https://github.com/giovanniguastiamd/InferenceX/actions/runs"
 # ---------------------------------------------------------------------------
 
 def _g(d, *keys, default=None):
-    """Safe nested dict access."""
     for k in keys:
         if not isinstance(d, dict):
             return default
@@ -90,13 +76,21 @@ def _g(d, *keys, default=None):
 
 
 def _r(v, n=5):
-    """Round to n decimal places, return empty string on None."""
     if v is None:
         return ""
     try:
         return round(float(v), n)
     except (TypeError, ValueError):
         return ""
+
+
+def read_json(f: pathlib.Path) -> dict:
+    """Read JSON, handling Windows 260-char path limit via \\?\\ prefix."""
+    path_str = str(f.resolve())
+    if sys.platform == "win32" and len(path_str) > 240 and not path_str.startswith("\\\\?\\"):
+        path_str = "\\\\?\\" + path_str
+    with open(path_str, encoding="utf-8") as fh:
+        return json.load(fh)
 
 
 def current_branch() -> str:
@@ -114,11 +108,91 @@ def detect_dataset_ok(artifact: dict) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# GitHub API helpers
+# ---------------------------------------------------------------------------
+
+def gh(*args, repo: str) -> dict | list | str:
+    """Run `gh` CLI with GITHUB_TOKEN unset (uses keyring auth)."""
+    env = {k: v for k, v in os.environ.items() if k != "GITHUB_TOKEN"}
+    cmd = ["gh"] + list(args) + ["--repo", repo]
+    result = subprocess.run(cmd, capture_output=True, text=True, env=env)
+    if result.returncode != 0:
+        print(f"gh error: {result.stderr.strip()}", file=sys.stderr)
+        return {}
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return result.stdout.strip()
+
+
+def get_image_from_run(run_id: str, repo: str) -> str:
+    """
+    Extract docker image from the first agentic job name.
+    Job name format: 'agentic / (IMAGE, MODEL, ...)  / ...'
+    """
+    data = gh("run", "view", run_id, "--json", "jobs", repo=repo)
+    jobs = data.get("jobs", []) if isinstance(data, dict) else []
+    for job in jobs:
+        name = job.get("name", "")
+        # Extract first token inside parentheses
+        m = re.search(r'\(([^,)]+)', name)
+        if m:
+            candidate = m.group(1).strip()
+            # Looks like an image tag: contains '/' and ':'
+            if "/" in candidate and ":" in candidate:
+                return candidate
+    return ""
+
+
+def extract_runner_from_dirname(dirname: str) -> str:
+    """
+    Artifact dir name ends with the runner label, e.g.:
+      bmk_agentic_..._spec-mtp_conc6_mi355x-amds_03
+    Extract the last '_'-separated segment that matches a runner pattern.
+    """
+    # Try to find a segment like 'mi355x-amds_03'
+    m = re.search(r'(mi\d+x[-\w]+_\d+)$', dirname)
+    if m:
+        return m.group(1)
+    return ""
+
+
+# ---------------------------------------------------------------------------
+# Download artifacts from GitHub
+# ---------------------------------------------------------------------------
+
+def download_artifacts(run_id: str, repo: str) -> pathlib.Path:
+    """
+    Download all bmk_agentic_* artifacts for a run into a temp directory.
+    Returns the temp directory path.
+    """
+    # Use a short base path to stay under Windows 260-char limit
+    tmpdir = pathlib.Path(tempfile.gettempdir()) / "ij"
+    run_dir = tmpdir / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    env = {k: v for k, v in os.environ.items() if k != "GITHUB_TOKEN"}
+    cmd = [
+        "gh", "run", "download", run_id,
+        "--repo", repo,
+        "--pattern", "bmk_agentic_*",
+        "--dir", str(run_dir),
+    ]
+    print(f"Downloading bmk_agentic_* artifacts from run {run_id}…")
+    result = subprocess.run(cmd, capture_output=True, text=True, env=env)
+    if result.returncode != 0:
+        print(f"gh error: {result.stderr.strip()}", file=sys.stderr)
+        sys.exit(1)
+
+    return run_dir
+
+
+# ---------------------------------------------------------------------------
 # Row extraction
 # ---------------------------------------------------------------------------
 
 def extract_row(artifact: dict, *, run_id: str, branch: str, runner: str,
-                image: str, notes: str, dataset_ok_override) -> dict:
+                image: str, notes: str, dataset_ok_override, repo: str) -> dict:
     rm    = artifact.get("request_metrics", {})
     sm    = artifact.get("server_metrics", {})
     lat   = rm.get("latency", {})
@@ -130,21 +204,16 @@ def extract_row(artifact: dict, *, run_id: str, branch: str, runner: str,
     cache   = sm.get("cache", {})
     kv_c    = sm.get("kv_cache", {})
 
-    # dataset_ok
-    if dataset_ok_override is None:
-        dok = detect_dataset_ok(artifact)
-    else:
-        dok = dataset_ok_override
-
+    dok = dataset_ok_override if dataset_ok_override is not None else detect_dataset_ok(artifact)
     img = image or (artifact.get("image") or "")
     spec = artifact.get("spec_decoding") or ""
-    mtp_val = spec if spec else ""
 
+    base_url = GH_BASE.format(repo=repo)
     r = {k: "" for k in HEADER}
     r.update({
         "date":                  str(date.today()),
         "run_id":                run_id or "",
-        "job_url":               f"{GH_BASE}/{run_id}" if run_id else "",
+        "job_url":               f"{base_url}/{run_id}" if run_id else "",
         "branch":                branch or "",
         "runner":                runner or "",
         "image":                 img,
@@ -154,7 +223,7 @@ def extract_row(artifact: dict, *, run_id: str, branch: str, runner: str,
         "conc":                  artifact.get("conc", ""),
         "max_running_requests":  artifact.get("conc", ""),
         "kv_offload":            artifact.get("kv_offloading") or "none",
-        "mtp":                   mtp_val,
+        "mtp":                   spec,
         "duration_s":            _r(_g(tput, "duration_seconds"), 2),
         "requests_ok":           artifact.get("num_requests_successful", ""),
         "throughput_per_gpu_tps": _r(_g(per_gpu, "total_tput_tps"), 2),
@@ -187,15 +256,26 @@ def main():
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("path", type=pathlib.Path,
-                        help="JSON file or directory of JSON files.")
-    parser.add_argument("--run-id",  default="",  help="GitHub Actions run ID.")
-    parser.add_argument("--branch",  default="",  help="Branch name (default: current branch).")
-    parser.add_argument("--runner",  default="",  help="Runner label (e.g. mi355x-amds_03).")
-    parser.add_argument("--image",   default="",  help="Docker image tag.")
-    parser.add_argument("--notes",   default="",  help="Free-text notes.")
-    parser.add_argument("--dataset-ok", default="auto", choices=["auto", "true", "false"],
-                        help="Override dataset_ok. auto=detect from loader name (default).")
+    src = parser.add_mutually_exclusive_group(required=True)
+    src.add_argument("--gh-run", metavar="RUN_ID",
+                     help="GitHub Actions run ID — downloads artifacts automatically.")
+    src.add_argument("path", nargs="?", type=pathlib.Path,
+                     help="Local JSON file or directory of JSON files.")
+
+    parser.add_argument("--repo", default="giovanniguastiamd/InferenceX",
+                        help="GitHub repo (default: giovanniguastiamd/InferenceX).")
+    parser.add_argument("--runner",  default="",
+                        help="Runner label override (auto-detected from artifact dir name).")
+    parser.add_argument("--image",   default="",
+                        help="Docker image tag override (auto-detected from GH job name).")
+    parser.add_argument("--branch",  default="",
+                        help="Branch name override (default: current git branch).")
+    parser.add_argument("--notes",   default="", help="Free-text notes.")
+    dok_grp = parser.add_mutually_exclusive_group()
+    dok_grp.add_argument("--dataset-ok",    dest="dataset_ok", action="store_true",
+                         default=None, help="Force dataset_ok=True.")
+    dok_grp.add_argument("--no-dataset-ok", dest="dataset_ok", action="store_false",
+                         help="Force dataset_ok=False.")
     parser.add_argument("--csv", type=pathlib.Path, default=pathlib.Path("progress.csv"),
                         help="Target CSV file (default: progress.csv).")
     parser.add_argument("--dry-run", action="store_true",
@@ -203,35 +283,62 @@ def main():
     args = parser.parse_args()
 
     branch = args.branch or current_branch()
-    dok_override = None if args.dataset_ok == "auto" else (args.dataset_ok == "true")
+    run_id = args.gh_run or ""
 
-    # Collect JSON files
-    p = args.path
-    json_files = sorted(p.rglob("*.json")) if p.is_dir() else [p]
+    # --- Resolve artifact directory ---
+    if args.gh_run:
+        artifact_dir = download_artifacts(args.gh_run, args.repo)
+    else:
+        artifact_dir = args.path
+
+    # --- Collect JSON files (handles long Windows paths) ---
+    if artifact_dir.is_dir():
+        json_files = sorted(artifact_dir.rglob("*.json"))
+    else:
+        json_files = [artifact_dir]
+
     if not json_files:
-        print(f"No JSON files found at: {p}", file=sys.stderr)
+        print(f"No JSON files found at: {artifact_dir}", file=sys.stderr)
         sys.exit(1)
 
+    # --- Auto-detect image from GitHub API (only for --gh-run or if run_id given) ---
+    image = args.image
+    if not image and run_id:
+        print(f"Auto-detecting image from run {run_id}…")
+        image = get_image_from_run(run_id, args.repo)
+        if image:
+            print(f"  image: {image}")
+        else:
+            print("  (could not detect image — use --image to set manually)")
+
+    # --- Process files ---
     rows = []
     for f in json_files:
         try:
-            artifact = json.loads(f.read_text(encoding="utf-8"))
+            artifact = read_json(f)
         except Exception as e:
             print(f"Warning: skipping {f.name}: {e}", file=sys.stderr)
             continue
 
+        # Auto-detect runner from artifact parent dir name
+        runner = args.runner
+        if not runner:
+            runner = extract_runner_from_dirname(f.parent.name)
+
         row = extract_row(
             artifact,
-            run_id=args.run_id,
+            run_id=run_id,
             branch=branch,
-            runner=args.runner,
-            image=args.image,
+            runner=runner,
+            image=image,
             notes=args.notes,
-            dataset_ok_override=dok_override,
+            dataset_ok_override=args.dataset_ok,
+            repo=args.repo,
         )
         rows.append(row)
         print(
             f"  conc={row['conc']:>3}  tp={row['tp']}  ep={row['ep']}"
+            f"  runner={row['runner']}"
             f"  ITL_p90={row['itl_p90_ms']:>6}ms"
             f"  intvty_p90={row['intvty_p90']:>7}"
             f"  output_tps={row['output_tps']:>8}"
