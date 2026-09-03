@@ -1,0 +1,16 @@
+# .gitcommon — files shared across all branches
+# Run ./sync_common.sh [canonical-branch] to pull these from the canonical branch (default: main)
+# These files are version-controlled on main; other branches should sync rather than diverge.
+
+progress.csv
+gen_progress_csv.py
+pareto_plot.py
+pareto_plot.png
+campaign_glm52_mi355x_2026.md
+SGL_missing_features_01_09_2026.md
+SGL_missing_features_01_09_2026_IT.md
+sync_common.py
+ingest_json.py
+tuner_en.md
+progress.csv
+
