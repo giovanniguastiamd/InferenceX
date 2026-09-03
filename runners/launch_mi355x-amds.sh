@@ -299,12 +299,15 @@ else
             -v "${AIPERF_CACHE_LOCAL}:/aiperf_mmap_cache" \
             ${MODEL_PATH:+-v "${MODEL_PATH}:${MODEL_PATH}"} \
             -v "${HF_HUB_CACHE_HOST}:/mnt/hf_hub_cache" \
-            -e MODEL -e MODEL_NAME -e PRECISION -e FRAMEWORK \
-            -e TP -e EP_SIZE -e DP_ATTENTION -e CONC \
+            -e MODEL -e MODEL_NAME -e MODEL_PREFIX -e PRECISION -e FRAMEWORK \
+            -e TP -e EP_SIZE -e PP_SIZE -e DCP_SIZE -e PCP_SIZE -e DP_ATTENTION -e CONC \
             -e KV_OFFLOADING -e KV_OFFLOAD_BACKEND -e KV_OFFLOAD_BACKEND_METADATA \
-            -e TOTAL_CPU_DRAM_GB -e DURATION \
+            -e TOTAL_CPU_DRAM_GB -e DURATION -e MAX_MODEL_LEN \
             -e RESULT_DIR -e SPEC_DECODING -e DISAGG \
             -e SCENARIO_TYPE -e SCENARIO_SUBDIR -e IS_AGENTIC \
+            -e EXP_NAME -e RECIPE_FINGERPRINT \
+            -e "REQUIRE_POWER=${REQUIRE_POWER:-0}" \
+            -e HF_TOKEN \
             -e "RUN_EVAL=${RUN_EVAL:-false}" \
             -e "EVAL_ONLY=${EVAL_ONLY:-false}" \
             -e EVAL_LIMIT \
