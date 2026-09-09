@@ -1,3 +1,11 @@
 **/__pycache__/**
 **/.coverage
 experimental/multiturn/vllm_benchmark/results/
+
+# gg personal tools — not part of the repo
+gen_progress_csv.py
+ingest_json.py
+pareto_plot.py
+pareto_plot.png
+progress.csv
+tuner_en.md
