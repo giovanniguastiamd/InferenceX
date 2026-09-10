@@ -167,7 +167,6 @@ ATOM_CMD=(
     --online_quant_config '{"global_quant_config":"ptpc_fp8","exclude_layer":["lm_head","model.embed_tokens","*.mlp.gate","*expert*"]}'
     --max-num-seqs "$((2 * CONC))"
     --cudagraph-capture-sizes "$CUDAGRAPH_CAPTURE_SIZES"
-    --max-num-batched-tokens 65536
     --kv_cache_dtype fp8
     "${SPEC_ARGS[@]}"
     "${OFFLOAD_ARGS[@]}"
