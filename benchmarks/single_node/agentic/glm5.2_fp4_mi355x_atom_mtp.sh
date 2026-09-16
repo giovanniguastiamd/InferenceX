@@ -138,12 +138,9 @@ if [ "$DP_ATTENTION" = "true" ]; then
 fi
 if (( DCP_SIZE > 1 )); then
     PARALLEL_ARGS+=(--decode-context-parallel-size "$DCP_SIZE")
-    # Block-level KV interleave: token i lives on DCP rank (i // S) % W, so each
-    # rank keeps S consecutive tokens instead of striping one in every W. S=16 is
-    # the headline example in ATOM's docs/context_parallel_guide.md and the max
-    # allowed here (kv_cache_block_size is 16, and S must divide it). Leaving it
-    # unset silently runs the token-level default S=1.
-    PARALLEL_ARGS+=(--dcp-config '{"interleave_size": 16, "enable_query_replication": true}')
+    # interleave_size stays at its default of 1: ATOM's context_parallel_guide.md
+    # makes S > 1 incompatible with speculative decode, and this branch keeps MTP
+    # on to probe the documented K <= 3 window.
 fi
 
 # Draft depth per concurrency; forced acceptance length is the golden value for
@@ -152,14 +149,20 @@ fi
 # (glm-5.2-fp8, thinking_on): K5 -> 3.61, K4 -> 3.33, K3 -> 2.99.
 NUM_SPEC_TOKENS=0; SIMULATE_ACC_LEN=0
 if (( DCP_SIZE > 1 )); then
-    # GLM-5.2 is GlmMoeDsaForCausalLM, i.e. DSA / sparse MLA, and ATOM's
-    # docs/context_parallel_guide.md scopes MTP-under-DCP to dense MLA: "DSA /
-    # sparse MLA does not support MTP under DCP yet ... Serve DSA + DCP without
-    # --method mtp". The same guide validates GLM-5.2 tp4/dcp4 and tp8/dcp8
-    # explicitly with no speculative decode. Enabling MTP here collapses prefill
-    # (24/444 warmup requests in 2670 s vs 422/444 in 1442 s without it) and
-    # also forces interleave_size back to 1.
-    SPEC_ARGS=()
+    # EXPERIMENT BRANCH: keep MTP on under DCP, but inside the window ATOM's
+    # docs/context_parallel_guide.md documents. Its MTP-under-DCP support matrix
+    # is "num_speculative_tokens = 1, 2, or 3"; the upstream recipe sends K=4 for
+    # every CONC below 48, which is outside that window and is the prime suspect
+    # for the prefill collapse (24/444 warmup requests in 2670 s vs 422/444 in
+    # 1442 s with MTP off).
+    NUM_SPEC_TOKENS=3; SIMULATE_ACC_LEN=2.99
+    SPEC_ARGS=(
+        --method mtp
+        --num-speculative-tokens "$NUM_SPEC_TOKENS"
+    )
+    if [ "${EVAL_ONLY}" != "true" ]; then
+        SPEC_ARGS+=(--spec-decode-acceptance-length "$SIMULATE_ACC_LEN")
+    fi
 else
     case "$CONC" in
       1|2|4|8) NUM_SPEC_TOKENS=5; SIMULATE_ACC_LEN=3.61 ;;
