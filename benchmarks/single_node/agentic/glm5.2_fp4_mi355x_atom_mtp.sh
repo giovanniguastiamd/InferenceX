@@ -138,6 +138,12 @@ if [ "$DP_ATTENTION" = "true" ]; then
 fi
 if (( DCP_SIZE > 1 )); then
     PARALLEL_ARGS+=(--decode-context-parallel-size "$DCP_SIZE")
+    # Block-level KV interleave: token i lives on DCP rank (i // S) % W, so each
+    # rank keeps S consecutive tokens instead of striping one in every W. S=16 is
+    # the headline example in ATOM's docs/context_parallel_guide.md and the max
+    # allowed here (kv_cache_block_size is 16, and S must divide it). Leaving it
+    # unset silently runs the token-level default S=1.
+    PARALLEL_ARGS+=(--dcp-config '{"interleave_size": 16, "enable_query_replication": true}')
 fi
 
 # Draft depth per concurrency; forced acceptance length is the golden value for
@@ -146,10 +152,13 @@ fi
 # (glm-5.2-fp8, thinking_on): K5 -> 3.61, K4 -> 3.33, K3 -> 2.99.
 NUM_SPEC_TOKENS=0; SIMULATE_ACC_LEN=0
 if (( DCP_SIZE > 1 )); then
-    # nightly_202609151450 cannot combine spec decoding with DCP: the engine
-    # logs "dcp_config.enable_query_replication disabled: speculative decode
-    # (qlen>1 cprr path) not supported in the first cut" and prefill collapses
-    # (24/444 warmup requests in 2670 s vs 422/444 in 1442 s without MTP).
+    # GLM-5.2 is GlmMoeDsaForCausalLM, i.e. DSA / sparse MLA, and ATOM's
+    # docs/context_parallel_guide.md scopes MTP-under-DCP to dense MLA: "DSA /
+    # sparse MLA does not support MTP under DCP yet ... Serve DSA + DCP without
+    # --method mtp". The same guide validates GLM-5.2 tp4/dcp4 and tp8/dcp8
+    # explicitly with no speculative decode. Enabling MTP here collapses prefill
+    # (24/444 warmup requests in 2670 s vs 422/444 in 1442 s without it) and
+    # also forces interleave_size back to 1.
     SPEC_ARGS=()
 else
     case "$CONC" in
