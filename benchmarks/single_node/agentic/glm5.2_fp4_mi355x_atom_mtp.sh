@@ -172,6 +172,10 @@ echo "DCP_SIZE=$DCP_SIZE NUM_SPEC_TOKENS=$NUM_SPEC_TOKENS SIMULATE_ACC_LEN=$SIMU
 ATOM_CMD=(
     python -m atom.entrypoints.openai_server
     --model "$MODEL_PATH"
+    # AIPerf addresses the server by the HF id, while --model carries the local
+    # checkout path on runners that pre-stage weights. ATOM rejects the mismatch
+    # with a 400 on every request, so pin the served name like the dsv4 recipe.
+    --served-model-name "$MODEL"
     --host 0.0.0.0
     --server-port "$PORT"
     "${PARALLEL_ARGS[@]}"
