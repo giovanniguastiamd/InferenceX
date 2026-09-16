@@ -144,12 +144,13 @@ fi
 # that depth from
 # https://github.com/SemiAnalysisAI/InferenceX/blob/main/golden_al_distribution/glm5.2_mtp.yaml
 # (glm-5.2-fp8, thinking_on): K5 -> 3.61, K4 -> 3.33, K3 -> 2.99.
+NUM_SPEC_TOKENS=0; SIMULATE_ACC_LEN=0
 if (( DCP_SIZE > 1 )); then
-    if (( CONC >= 48 )); then
-        NUM_SPEC_TOKENS=3; SIMULATE_ACC_LEN=2.99
-    else
-        NUM_SPEC_TOKENS=4; SIMULATE_ACC_LEN=3.33
-    fi
+    # nightly_202609151450 cannot combine spec decoding with DCP: the engine
+    # logs "dcp_config.enable_query_replication disabled: speculative decode
+    # (qlen>1 cprr path) not supported in the first cut" and prefill collapses
+    # (24/444 warmup requests in 2670 s vs 422/444 in 1442 s without MTP).
+    SPEC_ARGS=()
 else
     case "$CONC" in
       1|2|4|8) NUM_SPEC_TOKENS=5; SIMULATE_ACC_LEN=3.61 ;;
@@ -159,13 +160,13 @@ else
         exit 2
         ;;
     esac
-fi
-SPEC_ARGS=(
-    --method mtp
-    --num-speculative-tokens "$NUM_SPEC_TOKENS"
-)
-if [ "${EVAL_ONLY}" != "true" ]; then
-    SPEC_ARGS+=(--spec-decode-acceptance-length "$SIMULATE_ACC_LEN")
+    SPEC_ARGS=(
+        --method mtp
+        --num-speculative-tokens "$NUM_SPEC_TOKENS"
+    )
+    if [ "${EVAL_ONLY}" != "true" ]; then
+        SPEC_ARGS+=(--spec-decode-acceptance-length "$SIMULATE_ACC_LEN")
+    fi
 fi
 echo "DCP_SIZE=$DCP_SIZE NUM_SPEC_TOKENS=$NUM_SPEC_TOKENS SIMULATE_ACC_LEN=$SIMULATE_ACC_LEN"
 
