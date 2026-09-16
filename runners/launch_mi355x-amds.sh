@@ -258,9 +258,21 @@ else
         chmod 777 "${GITHUB_WORKSPACE}"
         mkdir -p "${GITHUB_WORKSPACE}/results"
         chmod 777 "${GITHUB_WORKSPACE}/results"
+        # This Docker fallback is fork-local; upstream drives mi355x-amds through
+        # SLURM, where slurm_utils.sh forwards the workflow-owned settings. Reuse
+        # the same canonical list here so that settings added upstream do not
+        # silently arrive empty inside the container.
+        check_env_vars INFERENCEX_RUNTIME_ENV_VARS INFMAX_CONTAINER_WORKSPACE
+        RUNTIME_ENV_ARGS=()
+        for runtime_var in $INFERENCEX_RUNTIME_ENV_VARS; do
+            check_env_vars "$runtime_var"
+            RUNTIME_ENV_ARGS+=(--env "$runtime_var")
+        done
         set -x
         docker pull "$IMAGE"
         docker run --rm \
+            "${RUNTIME_ENV_ARGS[@]}" \
+            -e INFMAX_CONTAINER_WORKSPACE -e IS_MULTINODE -e SWEBENCH_USE_MODAL \
             --privileged \
             --network=host \
             --ipc=host \
