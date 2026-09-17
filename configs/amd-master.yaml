@@ -1387,11 +1387,13 @@ glm5.2-fp4-mi355x-atom-agentic-mtp:
        - { tp: 4, dcp-size: 4, kv-offloading: dram, kv-offload-backend: { name: lmcache, version: "0.4.5" }, conc-list: [16, 24, 32, 40, 48], spec-decoding: mtp }
        - { tp: 8, kv-offloading: none, conc-list: [1, 2, 4], spec-decoding: mtp }
 
-# Fork-local validation key, not for upstream. Runs only the TP4+DCP4 arm of
-# glm5.2-fp4-mi355x-atom-agentic-mtp, which is where the _0915 recipe changed the
-# most: C24 and C48 are not in the PR #3171 validation list, and C48 is the single
-# point that drops to MTP3. C16/C32/C40 come along to give a direct delta against
-# the previous _0902 measurements. Everything else mirrors the upstream key.
+# Fork-local reproduction key, not for upstream. Branched at 6aab0f283, the exact
+# commit whose C40 run (35080071490) went from 16k-token prefill chunks in 1-2 s to
+# 130-142 s each at 09:44:21 and never recovered, with all four ranks pinned at
+# 100% gfx_activity, ~0.1% umc_activity and 314 W. That stall is a single
+# observation, so this key re-runs C40 alone to establish whether it reproduces.
+# The rest of the TP4+DCP4 arm is dropped: the stall starts about four minutes into
+# warmup, so one concurrency point is enough and costs a quarter of the slot.
 glm5.2-fp4-mi355x-atom-agentic-mtp-dcp:
   image: rocm/atom-dev:nightly_202609151450
   model: amd/GLM-5.2-MXFP4
@@ -1404,7 +1406,7 @@ glm5.2-fp4-mi355x-atom-agentic-mtp-dcp:
     agentic-coding:
     - dram-utilization: 0.171
       search-space:
-       - { tp: 4, dcp-size: 4, kv-offloading: dram, kv-offload-backend: { name: lmcache, version: "0.4.5" }, conc-list: [16, 24, 32, 40, 48], spec-decoding: mtp }
+       - { tp: 4, dcp-size: 4, kv-offloading: dram, kv-offload-backend: { name: lmcache, version: "0.4.5" }, conc-list: [40], spec-decoding: mtp }
 
 dsv4-fp4-mi355x-sglang-agentic-mtp:
   image: lmsysorg/sglang-rocm:v0.5.19-rocm720-mi35x-20260911
