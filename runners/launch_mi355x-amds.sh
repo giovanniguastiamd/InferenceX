@@ -271,6 +271,7 @@ else
         set -x
         docker pull "$IMAGE"
         docker run --rm \
+            --label inferencex-ci=1 \
             "${RUNTIME_ENV_ARGS[@]}" \
             -e INFMAX_CONTAINER_WORKSPACE -e IS_MULTINODE -e SWEBENCH_USE_MODAL \
             --privileged \
@@ -325,6 +326,7 @@ else
             docker pull "$_CLEANUP_IMAGE" >/dev/null 2>&1 || \
             _CLEANUP_IMAGE="$IMAGE"
         docker run --rm \
+            --label inferencex-ci=1 \
             --user 65534:65534 \
             -v "${GITHUB_WORKSPACE}:${GITHUB_WORKSPACE}" \
             "$_CLEANUP_IMAGE" \

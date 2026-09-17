@@ -222,13 +222,17 @@ jobs:
 
       - name: Resource cleanup (pre-run)
         run: &resource-cleanup |
-          # Cleanup Docker resources
+          # Cleanup Docker resources. Several self-hosted pools are shared
+          # bare-metal boxes where people run their own containers on the GPUs
+          # this job does not own, so the sweep is scoped to containers the CI
+          # launchers created (labelled inferencex-ci=1) instead of every
+          # container on the host.
           if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
             echo "[Docker] Cleaning up resources ..."
-            docker ps -aq | xargs -r docker rm -f
+            docker ps -aq --filter label=inferencex-ci | xargs -r docker rm -f
             docker network prune -f
-            while [ -n "$(docker ps -aq)" ]; do
-              docker ps -a
+            while [ -n "$(docker ps -aq --filter label=inferencex-ci)" ]; do
+              docker ps -a --filter label=inferencex-ci
               sleep 5
             done
           fi
