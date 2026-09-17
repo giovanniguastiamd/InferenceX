@@ -1406,6 +1406,28 @@ glm5.2-fp4-mi355x-atom-agentic-mtp-dcp:
       search-space:
        - { tp: 4, dcp-size: 4, kv-offloading: dram, kv-offload-backend: { name: lmcache, version: "0.4.5" }, conc-list: [16, 24, 32, 40, 48], spec-decoding: mtp }
 
+# Fork-local validation key, not for upstream. Runs the two TP-only arms of
+# glm5.2-fp4-mi355x-atom-agentic-mtp, left exactly as committed upstream so the
+# draft depths stay K5 (C1-C8) and K4 (C10). Both are above the qo_len 4 ceiling
+# that gqa_ratio=16 fp8 tiles impose on the DCP arm, but without DCP the cprr
+# path is off and the asm_mla.cu lookup key changes, so whether the ceiling still
+# binds is an open question this key is meant to answer. The DCP arm is excluded:
+# it is covered by glm5.2-fp4-mi355x-atom-agentic-mtp-dcp.
+glm5.2-fp4-mi355x-atom-agentic-mtp-tp:
+  image: rocm/atom-dev:nightly_202609151450
+  model: amd/GLM-5.2-MXFP4
+  model-prefix: glm5.2
+  runner: cluster:mi355x-amds
+  precision: fp4
+  framework: atom
+  multinode: false
+  scenarios:
+    agentic-coding:
+    - dram-utilization: 0.171
+      search-space:
+       - { tp: 4, kv-offloading: dram, kv-offload-backend: { name: lmcache, version: "0.4.5" }, conc-list: [2, 4, 8, 10], spec-decoding: mtp }
+       - { tp: 8, kv-offloading: none, conc-list: [1, 2, 4], spec-decoding: mtp }
+
 dsv4-fp4-mi355x-sglang-agentic-mtp:
   image: lmsysorg/sglang-rocm:v0.5.19-rocm720-mi35x-20260911
   model: deepseek-ai/DeepSeek-V4-Pro-0813
