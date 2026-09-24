@@ -282,19 +282,27 @@ else
         # those actually set are passed, and `-e NAME` forwards the value
         # without printing it under set -x, which is what keeps the two MODAL_*
         # tokens out of the log.
+        #
+        # $INFERENCEX_RUNTIME_ENV_VARS is the repo's own declaration of what must
+        # cross a container boundary -- benchmarks/runtime_settings.sh exports the
+        # values and names them in one place, and server_sglang.sh forwards them
+        # the same way. Expanding it here rather than copying its 31 names means a
+        # variable added upstream arrives without this list being touched. Copying
+        # them by hand is what produced the AIPERF_PYTHON_VERSION failure.
+        check_env_vars INFERENCEX_RUNTIME_ENV_VARS
         DOCKER_ENV_ARGS=()
-        for _v in \
+        for _v in $INFERENCEX_RUNTIME_ENV_VARS \
+            INFERENCEX_RUNTIME_ENV_VARS \
             MODEL MODEL_NAME MODEL_PATH MODEL_PREFIX THINKING_MODE \
             IMAGE FRAMEWORK PRECISION EXP_NAME RECIPE_FINGERPRINT \
             TP PP_SIZE DCP_SIZE PCP_SIZE EP_SIZE DP_ATTENTION CONC \
             ISL OSL MAX_MODEL_LEN RANDOM_RANGE_RATIO \
             SPEC_DECODING DISAGG KV_OFFLOADING KV_OFFLOAD_BACKEND \
             KV_OFFLOAD_BACKEND_METADATA KV_P2P_TRANSFER ROUTER_METADATA \
-            TOTAL_CPU_DRAM_GB DURATION REQUIRE_POWER \
+            TOTAL_CPU_DRAM_GB DURATION \
             SCENARIO_TYPE SCENARIO_SUBDIR IS_AGENTIC IS_MULTINODE KEEP_LOGS \
             RUN_EVAL EVAL_ONLY EVAL_FRAMEWORK EVAL_SUITE EVAL_LIMIT \
             SWEBENCH_GEN_MODE SWEBENCH_USE_MODAL MODAL_TOKEN_ID MODAL_TOKEN_SECRET \
-            AIPERF_EXPERIMENTAL_FAST AIPERF_FAILED_REQUEST_THRESHOLD \
             RESULT_DIR RESULT_FILENAME RESULT_FILENAME_BASE \
             GPU_COUNT GPU_MONITOR_INTERVAL GPU_METRICS_CSV \
             PORT RUNNER_NAME RUNNER_TYPE HF_TOKEN HF_HUB_CACHE \
