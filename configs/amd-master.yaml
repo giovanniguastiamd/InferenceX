@@ -1017,6 +1017,43 @@ dsv4-fp4-mi355x-atom-agentic-mtp:
       - { tp: 8, ep: 1, dp-attn: false, kv-offloading: none, spec-decoding: draft_model, conc-list: [1, 2, 4, 8, 16] }
       - { tp: 8, ep: 8, dp-attn: true, kv-offloading: none, spec-decoding: draft_model, conc-list: [48, 64, 96, 128, 256] }
 
+# DeepSeek-V4-Pro-0813 FP4 AgentX on one MI355X node using vLLM DSpark K6 --
+# the vLLM counterpart to the ATOM and SGLang -0813 arms above, and the ROCm
+# counterpart to dsv4-fp4-b200-vllm-agentic-mtp. Throughput bands fix synthetic
+# acceptance to thinking_on golden AL 3.77; eval uses real acceptance.
+#
+# model-prefix is dsv4pro0813, not dsv4, because the launcher derives the script
+# name from it: dsv4 would resolve to dsv4_fp4_mi355x_vllm_mtp.sh, which is the
+# June DeepSeek-V4-Pro arm and a different acceptance curve. The _mtp in the
+# resolved filename is the launcher's suffix for any speculative arm, as in
+# dsv41flash-fp4-mi300x-vllm-agentic-dspark -> dsv41flash_fp4_mi300x_mtp.sh.
+dsv4pro0813-fp4-mi355x-vllm-agentic-dspark:
+  # Newer than the eed1f3d0 nightly the June vLLM arm is validated on. Checked
+  # inside this image, not assumed: vllm 0.30.1rc1.dev48+g7f1a5398e carries the
+  # dspark speculator and accepts every speculative-config field the script
+  # passes. Digest read off the node, so it is the tag that actually resolves.
+  image: vllm/vllm-openai-rocm:nightly-7f1a5398e9610d96c473931a26c0e12bbe0d0423
+  model: deepseek-ai/DeepSeek-V4-Pro-0813
+  model-prefix: dsv4pro0813
+  runner: cluster:mi355x-amds
+  precision: fp4
+  framework: vllm
+  multinode: false
+  scenarios:
+    agentic-coding:
+    - dram-utilization: 0.60
+      search-space:
+      # Two points only. Both 48 and 96 are in the DP-attention band of the
+      # ATOM -0813 arm above, so this arm is comparable to it point for point:
+      # same checkpoint, same hardware, same K6 DSpark, different framework.
+      # That is the comparison this arm exists to make, and it does not need a
+      # curve to make it. Widen to a full curve once DSpark on ROCm has run
+      # once and the acceptance length has been observed rather than assumed.
+      - { tp: 8, ep: 1, dp-attn: true, kv-offloading: none, spec-decoding: draft_model, conc-list: [48, 96], router: { name: vllm-router, version: "0.1.14" } }
+      # No kv-offloading arm yet: LMCache invalid-block recovery still assumes
+      # one KV-cache group while speculative decoding creates two
+      # (https://github.com/vllm-project/vllm/pull/45497).
+
 dsr1-fp4-mi355x-sglang-disagg-mtp:
   image: lmsysorg/sglang-rocm:v0.5.12-rocm720-mi35x-20260519
   model: amd/DeepSeek-R1-0528-MXFP4-v2
