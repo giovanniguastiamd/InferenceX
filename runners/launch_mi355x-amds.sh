@@ -344,26 +344,37 @@ else
         _docker_rc=$?
         set +x
 
-        # Reclaim what root-in-container wrote. Under root_squash those files
-        # are owned by nobody, so the runner user cannot git-clean them on the
-        # next checkout; a container running *as* nobody can chmod them.
+        # Reclaim what root-in-container wrote, or the next job's checkout dies:
+        # git clean cannot unlink inside a root-owned directory, actions/checkout
+        # then recreates the workspace, the recreate half-fails too, and every
+        # git command after it reports "not a git repository" (run 36008151528).
+        #
+        # This must run as root, not as nobody. Under root_squash root is mapped
+        # to nobody, which is precisely who owns those files, so the chmod is
+        # allowed; on a local filesystem root owns them outright and the chmod is
+        # allowed as well. nobody only works in the first case -- on mi355x-amds_04
+        # /home is local xfs and every chmod failed silently.
+        #
+        # chown is the better outcome where it is permitted, but root_squash
+        # forbids it, so it stays best-effort and chmod is what has to hold.
+        # aiperf writes results/aiperf_artifacts/ itself, so a mode set on the
+        # parent before the run does not cover it -- this has to happen after.
         _CLEANUP_IMAGE="alpine"
         docker image inspect "$_CLEANUP_IMAGE" >/dev/null 2>&1 || \
             docker pull "$_CLEANUP_IMAGE" >/dev/null 2>&1 || \
             _CLEANUP_IMAGE="$IMAGE"
         docker run --rm \
-            --user 65534:65534 \
             -v "${GITHUB_WORKSPACE}:${GITHUB_WORKSPACE}" \
             --entrypoint sh \
             "$_CLEANUP_IMAGE" \
-            -c "chmod -R a+rwX \
-                    '${GITHUB_WORKSPACE}/results' \
-                    '${GITHUB_WORKSPACE}/LOGS' \
-                    2>/dev/null; \
+            -c "for d in '${GITHUB_WORKSPACE}/results' '${GITHUB_WORKSPACE}/LOGS'; do \
+                       [ -e \"\$d\" ] || continue; \
+                       chown -R $(id -u):$(id -g) \"\$d\" 2>/dev/null; \
+                       chmod -R a+rwX \"\$d\"; \
+                   done; \
                    find '${GITHUB_WORKSPACE}' -maxdepth 1 -name '*.json' \
-                    -exec chmod a+rw {} + 2>/dev/null; \
-                   true" \
-            2>/dev/null || true
+                    -exec chmod a+rw {} +; \
+                   true" || true
 
         exit $_docker_rc
     fi
