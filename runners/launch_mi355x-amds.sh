@@ -235,6 +235,130 @@ PY
 
 else
 
+    # ── Docker fallback [local testing, not for upstream] ────────────────────
+    # The Slurm path below assumes a configured cluster partition. team-server
+    # has neither salloc nor squeue, so without this the job dies at exit 127
+    # before anything is launched (run 36000764730). Set FORCE_DOCKER=1 in the
+    # runner .env to take this path even where salloc exists but no partition
+    # is configured.
+    if ! command -v salloc >/dev/null 2>&1 || [[ "${FORCE_DOCKER:-}" == "1" ]]; then
+        # The runner loads .env into its own process but does not export it to
+        # subprocesses, so read it here. GITHUB_WORKSPACE is
+        # <runner>/_work/<repo>/<repo>; strip three components to reach .env.
+        _RUNNER_ENV="${GITHUB_WORKSPACE%/*/*/*}/.env"
+        if [[ -f "$_RUNNER_ENV" ]]; then
+            set -a; source "$_RUNNER_ENV"; set +a
+        fi
+
+        export HF_CACHE_LOCAL="${HOME}/.cache/huggingface"
+        export AIPERF_CACHE_LOCAL="${HOME}/.cache/aiperf-mmap"
+        export HF_HUB_CACHE_HOST="${HF_HUB_CACHE_HOST:-/mnt/hf_hub_cache}"
+        mkdir -p "$HF_CACHE_LOCAL" "$AIPERF_CACHE_LOCAL"
+        export PORT_OFFSET=${RUNNER_NAME: -1}
+        export PORT=$(( 8888 + ${PORT_OFFSET:-0} ))
+
+        # Resolve the benchmark script exactly as the Slurm path does below.
+        # Deriving it independently is how the earlier version of this patch
+        # broke: it tested SPEC_DECODING only against "mtp", so a draft_model
+        # arm resolved to a script name that does not exist.
+        FRAMEWORK_SUFFIX=$([[ "$FRAMEWORK" == "atom" ]] && printf '_atom' || printf '')
+        SPEC_SUFFIX=$([[ "$SPEC_DECODING" == "mtp" || "$SPEC_DECODING" == "draft_model" ]] && printf '_mtp' || printf '')
+        SCRIPT_BASE="${EXP_NAME%%_*}_${PRECISION}_mi355x"
+        check_env_vars SCENARIO_SUBDIR
+        SCRIPT_FW="benchmarks/single_node/${SCENARIO_SUBDIR}${SCRIPT_BASE}_${FRAMEWORK}${SPEC_SUFFIX}.sh"
+        SCRIPT_FALLBACK="benchmarks/single_node/${SCENARIO_SUBDIR}${SCRIPT_BASE}${FRAMEWORK_SUFFIX}${SPEC_SUFFIX}.sh"
+        if [[ -f "$SCRIPT_FW" ]]; then
+            BENCHMARK_SCRIPT="$SCRIPT_FW"
+        else
+            BENCHMARK_SCRIPT="$SCRIPT_FALLBACK"
+        fi
+        if [[ ! -f "$BENCHMARK_SCRIPT" ]]; then
+            echo "ERROR: no benchmark script at $SCRIPT_FW or $SCRIPT_FALLBACK" >&2
+            exit 1
+        fi
+
+        # The Slurm path forwards the whole environment (--export=ALL). Docker
+        # does not, so name every variable a benchmark script may read. Only
+        # those actually set are passed, and `-e NAME` forwards the value
+        # without printing it under set -x, which is what keeps the two MODAL_*
+        # tokens out of the log.
+        DOCKER_ENV_ARGS=()
+        for _v in \
+            MODEL MODEL_NAME MODEL_PATH MODEL_PREFIX THINKING_MODE \
+            IMAGE FRAMEWORK PRECISION EXP_NAME RECIPE_FINGERPRINT \
+            TP PP_SIZE DCP_SIZE PCP_SIZE EP_SIZE DP_ATTENTION CONC \
+            ISL OSL MAX_MODEL_LEN RANDOM_RANGE_RATIO \
+            SPEC_DECODING DISAGG KV_OFFLOADING KV_OFFLOAD_BACKEND \
+            KV_OFFLOAD_BACKEND_METADATA KV_P2P_TRANSFER ROUTER_METADATA \
+            TOTAL_CPU_DRAM_GB DURATION REQUIRE_POWER \
+            SCENARIO_TYPE SCENARIO_SUBDIR IS_AGENTIC IS_MULTINODE KEEP_LOGS \
+            RUN_EVAL EVAL_ONLY EVAL_FRAMEWORK EVAL_SUITE EVAL_LIMIT \
+            SWEBENCH_GEN_MODE SWEBENCH_USE_MODAL MODAL_TOKEN_ID MODAL_TOKEN_SECRET \
+            AIPERF_EXPERIMENTAL_FAST AIPERF_FAILED_REQUEST_THRESHOLD \
+            RESULT_DIR RESULT_FILENAME RESULT_FILENAME_BASE \
+            GPU_COUNT GPU_MONITOR_INTERVAL GPU_METRICS_CSV \
+            PORT RUNNER_NAME RUNNER_TYPE HF_TOKEN HF_HUB_CACHE \
+            PYTHONDONTWRITEBYTECODE PYTHONPYCACHEPREFIX \
+            INFMAX_CONTAINER_WORKSPACE DSV41_MIN_CUDAGRAPH_CAPTURE_SIZE \
+            MODEL_DOWNLOAD_LOCK_TIMEOUT \
+            CHUNKED_PREFILL_SIZE_OVERRIDE CUDA_GRAPH_BS_LIST_OVERRIDE \
+            ROCM_QUICK_REDUCE_QUANTIZATION SGLANG_USE_AITER_UNIFIED_ATTN \
+            HICACHE_RATIO HICACHE_WRITE_POLICY
+        do
+            [[ -n "${!_v+x}" ]] && DOCKER_ENV_ARGS+=(-e "$_v")
+        done
+
+        # The container runs as root; under NFS root_squash that maps to nobody,
+        # which cannot write into a workspace owned by the runner user.
+        chmod 777 "${GITHUB_WORKSPACE}"
+        mkdir -p "${GITHUB_WORKSPACE}/results"
+        chmod 777 "${GITHUB_WORKSPACE}/results"
+
+        set -x
+        docker pull "$IMAGE"
+        docker run --rm \
+            --privileged \
+            --network=host \
+            --ipc=host \
+            --shm-size=64g \
+            -w /workspace \
+            -v "${GITHUB_WORKSPACE}:/workspace" \
+            -v "${HF_CACHE_LOCAL}:/root/.cache/huggingface" \
+            -v "${AIPERF_CACHE_LOCAL}:/aiperf_mmap_cache" \
+            ${MODEL_PATH:+-v "${MODEL_PATH}:${MODEL_PATH}"} \
+            -v "${HF_HUB_CACHE_HOST}:${HF_HUB_CACHE:-/mnt/hf_hub_cache}" \
+            "${DOCKER_ENV_ARGS[@]}" \
+            -e AIPERF_DATASET_MMAP_CACHE_DIR=/aiperf_mmap_cache \
+            -e HF_HOME=/root/.cache/huggingface \
+            "$IMAGE" \
+            bash "$BENCHMARK_SCRIPT"
+        _docker_rc=$?
+        set +x
+
+        # Reclaim what root-in-container wrote. Under root_squash those files
+        # are owned by nobody, so the runner user cannot git-clean them on the
+        # next checkout; a container running *as* nobody can chmod them.
+        _CLEANUP_IMAGE="alpine"
+        docker image inspect "$_CLEANUP_IMAGE" >/dev/null 2>&1 || \
+            docker pull "$_CLEANUP_IMAGE" >/dev/null 2>&1 || \
+            _CLEANUP_IMAGE="$IMAGE"
+        docker run --rm \
+            --user 65534:65534 \
+            -v "${GITHUB_WORKSPACE}:${GITHUB_WORKSPACE}" \
+            "$_CLEANUP_IMAGE" \
+            sh -c "chmod -R a+rwX \
+                    '${GITHUB_WORKSPACE}/results' \
+                    '${GITHUB_WORKSPACE}/LOGS' \
+                    2>/dev/null; \
+                   find '${GITHUB_WORKSPACE}' -maxdepth 1 -name '*.json' \
+                    -exec chmod a+rw {} + 2>/dev/null; \
+                   true" \
+            2>/dev/null || true
+
+        exit $_docker_rc
+    fi
+    # ── End Docker fallback ──────────────────────────────────────────────────
+
     export HF_HUB_CACHE_MOUNT="/var/lib/hf-hub-cache/"
     export AIPERF_MMAP_CACHE_HOST_PATH="/it-share/aiperf-cache/"
     export PORT_OFFSET=${RUNNER_NAME: -1}
