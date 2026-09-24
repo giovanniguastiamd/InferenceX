@@ -330,8 +330,9 @@ else
             "${DOCKER_ENV_ARGS[@]}" \
             -e AIPERF_DATASET_MMAP_CACHE_DIR=/aiperf_mmap_cache \
             -e HF_HOME=/root/.cache/huggingface \
+            --entrypoint bash \
             "$IMAGE" \
-            bash "$BENCHMARK_SCRIPT"
+            "$BENCHMARK_SCRIPT"
         _docker_rc=$?
         set +x
 
@@ -345,8 +346,9 @@ else
         docker run --rm \
             --user 65534:65534 \
             -v "${GITHUB_WORKSPACE}:${GITHUB_WORKSPACE}" \
+            --entrypoint sh \
             "$_CLEANUP_IMAGE" \
-            sh -c "chmod -R a+rwX \
+            -c "chmod -R a+rwX \
                     '${GITHUB_WORKSPACE}/results' \
                     '${GITHUB_WORKSPACE}/LOGS' \
                     2>/dev/null; \

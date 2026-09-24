@@ -1035,6 +1035,16 @@ dsv4pro0813-fp4-mi355x-vllm-agentic-dspark:
   image: vllm/vllm-openai-rocm:nightly-7f1a5398e9610d96c473931a26c0e12bbe0d0423
   model: deepseek-ai/DeepSeek-V4-Pro-0813
   model-prefix: dsv4pro0813
+  # The node this must run on is mi355x-amds_04, where -0813 is staged, and not
+  # mi355x-amds_02 = smci355-ccs-aus-m15-17, whose .env points MODEL_PATH at
+  # /it-share/models/GLM-5.2-MXFP4 -- vLLM serves MODEL_PATH over MODEL, so a
+  # run there would be a different checkpoint under this arm's label. That
+  # cannot be pinned here: agentic entries are required to name a
+  # cluster:<name> fleet. Pin it at dispatch instead, with
+  #   --runner-node-filter mi355x-amds_04
+  # and note that runners.yaml lists _04 under cluster:mi355x-amds while its
+  # GitHub registration carries no such label, so the cluster form alone always
+  # lands on _02. check_dsv4_dspark_checkpoint.py is the backstop if it does.
   runner: cluster:mi355x-amds
   precision: fp4
   framework: vllm
