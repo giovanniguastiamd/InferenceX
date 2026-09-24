@@ -23,7 +23,14 @@ set -x
 # DSpark is present in the pinned ROCm build, checked in the image rather than
 # assumed: vllm 0.30.1rc1.dev48+g7f1a5398e ships v1/worker/gpu/spec_decode/dspark/,
 # SpeculativeConfig accepts every field this script passes, and
-# v1/attention/ops/rocm_aiter_mla_sparse.py exists. What is still unmeasured is
+# v1/attention/ops/rocm_aiter_mla_sparse.py exists.
+#
+# Present and schema-valid is not the same as enabled, and reading it that way
+# cost run 36005874797: both of the above hold and VllmConfig still refused the
+# config with "Model Runner V1 does not support: dspark speculative decoding".
+# Enablement is a third gate, handled at VLLM_USE_V2_MODEL_RUNNER below.
+#
+# What is still unmeasured is
 # the acceptance length this checkpoint reaches on this hardware -- 3.77 below
 # is B300's, used as a synthetic constant for throughput, not a ROCm result.
 #
@@ -298,6 +305,20 @@ MAX_NUM_SEQS=$((2 * CONC))
 if [ "$DP_ATTENTION" = "true" ]; then
     MAX_NUM_SEQS="$CONC"
 fi
+
+# DSpark is implemented only by the V2 GPU model runner: config/vllm.py puts
+# "dspark speculative decoding" on the V1 unsupported list, and VllmConfig
+# rejects the whole config there rather than falling back. On ROCm this model
+# does not reach V2 on its own -- DeepseekV4ForCausalLM is in
+# ROCM_DEFAULT_MRV1_ARCHITECTURES, so use_v2_model_runner returns False before
+# it ever consults the feature lists. VLLM_USE_V2_MODEL_RUNNER is read first
+# and overrides that default, which is why this is set and not merely implied.
+#
+# Upstream chose V1 for this architecture on ROCm deliberately, so V2 here is
+# the unvalidated path: a missing kernel or a throughput regression is a
+# plausible outcome and is a finding about V2, not about DSpark. Without it
+# there is no DSpark measurement on this hardware at all.
+export VLLM_USE_V2_MODEL_RUNNER=1
 
 # Golden AL 3.77: golden_al_distribution/dsv4-pro-0813-dspark.yaml, thinking_on,
 # probabilistic drafting, six draft tokens -- the curve's peak. AgentX measures
