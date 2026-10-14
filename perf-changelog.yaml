@@ -8803,3 +8803,12 @@
     - "Select a private writable FlyDSL runtime cache for allocation containers with the native FLYDSL_RUNTIME_CACHE_DIR override. AITER otherwise selects unreadable root-owned packaged cache files, failing GPU graph capture. Preserve kernel sources and tuning inputs; compilation stays before measurement."
     - "通过原生 FLYDSL_RUNTIME_CACHE_DIR 为资源分配容器选择私有可写 FlyDSL 运行缓存。否则 AITER 选择不可读的 root 所有镜像缓存文件，导致 GPU 图捕获失败。保留内核源码和调优输入；编译在测量前完成。"
   pr-link: https://github.com/SemiAnalysisAI/InferenceX/pull/XXX
+
+- config-keys:
+    - glm5.2-fp4-mi355x-sglang-agentic-mtp
+  scenario-type:
+    - agentic-coding
+  description:
+    - "Give allocation containers an explicit image-tool PATH without /root/.cargo/bin, which is inaccessible under the operator UID. TorchInductor's ROCm repro metadata probes absent nvcc and must receive FileNotFoundError rather than PermissionError. Preserve actual venv and ROCm tools."
+    - "为资源分配容器设置明确的镜像工具 PATH，去除操作者 UID 无法访问的 /root/.cargo/bin。TorchInductor 的 ROCm 复现元数据探测不存在的 nvcc，需要收到 FileNotFoundError 而不是 PermissionError。保留实际 venv 和 ROCm 工具。"
+  pr-link: https://github.com/SemiAnalysisAI/InferenceX/pull/XXX

@@ -39,6 +39,10 @@ UID/GID 和明确的 GPU 设备，不使用 privileged 模式。资源分配证�
 选择镜像中 root 所有的 FlyDSL 缓存。
 清理允许容器已被 Docker 的 `--rm` 删除；其他清理错误仍会显示。
 
+资源分配容器明确设置镜像的 venv、ROCm 与系统工具路径。镜像 PATH 中的
+`/root/.cargo/bin` 对操作者 UID 不可访问，会使 TorchInductor 的 ROCm 复现
+元数据探测不存在的 `nvcc` 时产生未处理的权限错误。内核与编译器选择保持不变。
+
 ## 实际配置检查（M2e）
 
 实际执行必须在请求或手动触发输入中提供 `image-digest: sha256:<64 hex digits>`。

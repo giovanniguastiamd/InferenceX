@@ -82,6 +82,7 @@ def container_command(env, name, recipe):
              "-e", "FLYDSL_RUNTIME_CACHE_DIR=/tmp/inferencex-flydsl-cache",
              "-e", "USER=inferencex", "-e", "LOGNAME=inferencex",
              "-e", "TORCHINDUCTOR_CACHE_DIR=/tmp/inferencex-torchinductor-cache",
+             "-e", "PATH=/opt/venv/bin:/opt/rocm/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/go/bin",
              "-e", "HOME=/tmp/inferencex-home", "-e", "SLURM_JOB_ID=" + env["ALLOCATION_JOB_ID"],
              "-e", "ALLOCATION_DATASET_PATH=/dataset",
              "-e", "SLURMD_NODENAME=" + env["ALLOCATION_NODE"],

@@ -50,6 +50,12 @@ AITER otherwise selects its packaged, root-owned FlyDSL cache at import time.
 Compilation occurs before readiness and measurement. Cleanup tolerates a container already removed
 by Docker's `--rm`; other cleanup errors remain visible.
 
+The allocation container explicitly names the image's venv, ROCm and system
+tool paths. `/root/.cargo/bin` from the image PATH is not accessible under the
+operator UID and turns an absent `nvcc` probe in TorchInductor's ROCm repro
+metadata into an unhandled permission error. Kernel and compiler selection
+are unchanged.
+
 ## Effective configuration gate (M2e)
 
 Real execution requires `image-digest: sha256:<64 hex digits>` in the request
