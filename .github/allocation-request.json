@@ -1,5 +1,7 @@
 {
   "job-id": "8244",
   "node": "pit2-p03-g10",
-  "validate-only": true
+  "validate-only": false,
+  "image-digest": "sha256:9a866d8fed2d5638c35daed0cc9f64d4b48a6ef24d4ddfb68eb7756c27abe2b9",
+  "dataset-manifest-sha256": "0eb0a7bf81087d5df4d7ac39805d38c44c6f42fb5bebc796368ed1f8246f8695"
 }
