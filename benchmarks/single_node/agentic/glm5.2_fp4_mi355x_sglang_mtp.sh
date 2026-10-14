@@ -214,6 +214,7 @@ SERVER_PID=$!
 echo "Server PID: $SERVER_PID"
  
 wait_for_server_ready --port "$SGLANG_BACKEND_PORT" --server-log "$SERVER_LOG" --server-pid "$SERVER_PID"
+verify_allocation_sglang "$SGLANG_BACKEND_PORT"
  
 if [ "$USE_SGLANG_ROUTER" = "true" ]; then
     echo "Starting SGLang router on port $PORT for $TP DP ranks..."

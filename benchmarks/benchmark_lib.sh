@@ -731,6 +731,17 @@ wait_for_ready() {
     wait "$tail_pid" 2>/dev/null || true
 }
 
+verify_allocation_sglang() {
+    local port="$1"
+    if [[ -n "${ALLOCATION_SERVER_EXPECTED:-}" ]]; then
+        check_env_vars ALLOCATION_SERVER_EXPECTED ALLOCATION_SERVER_REPORT
+        python3 "$INFERENCEX_REPO_ROOT/utils/verify_sglang.py" \
+            --url "http://127.0.0.1:$port" \
+            --expected "$ALLOCATION_SERVER_EXPECTED" \
+            --report "$ALLOCATION_SERVER_REPORT"
+    fi
+}
+
 wait_for_server_ready() {
     local port=""
     local server_log=""
@@ -3156,6 +3167,13 @@ ensure_hf_cli() {
 }
 
 resolve_trace_source() {
+    if [[ -n "${ALLOCATION_DATASET_PATH:-}" ]]; then
+        check_env_vars ALLOCATION_DATASET_PATH ALLOCATION_DATASET_REVISION \
+            ALLOCATION_DATASET_MANIFEST_SHA256
+        TRACE_SOURCE_FLAG="--input-file $ALLOCATION_DATASET_PATH/traces --custom-dataset-type weka_trace"
+        echo "Using verified local Weka traces at revision $ALLOCATION_DATASET_REVISION"
+        return 0
+    fi
     # WEKA_LOADER_OVERRIDE picks an aiperf public-dataset loader for recipes
     # with non-default context caps (minimaxm2.5 at ~256k cannot replay the
     # unfiltered corpus) or to pin an older corpus. Default: the 062126 v7
@@ -3271,7 +3289,12 @@ build_replay_cmd() {
     REPLAY_CMD+=" --model ${SERVED_MODEL_NAME:-$MODEL}"
     # The tokenizer defaults to --model, and a wire name is not necessarily a
     # valid HF repo id, so pass the real id explicitly.
-    REPLAY_CMD+=" --tokenizer $MODEL"
+    if [[ -n "${ALLOCATION_MODEL_REVISION:-}" ]]; then
+        check_env_vars MODEL_PATH ALLOCATION_MODEL_REVISION
+        REPLAY_CMD+=" --tokenizer $MODEL_PATH"
+    else
+        REPLAY_CMD+=" --tokenizer $MODEL"
+    fi
     REPLAY_CMD+=" --concurrency $CONC"
     REPLAY_CMD+=" --benchmark-duration $duration"
     REPLAY_CMD+=" --stats-interval 30"

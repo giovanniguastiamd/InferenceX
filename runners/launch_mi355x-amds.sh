@@ -15,7 +15,14 @@ if [[ -n "${ALLOCATION_JOB_ID:-}" ]]; then
     fi
     case "$ALLOCATION_VALIDATE_ONLY" in
         true) allocation_args=(--validate-only) ;;
-        false) allocation_args=() ;;
+        false)
+            check_env_vars ALLOCATION_IMAGE_DIGEST ALLOCATION_SPEC_ALGORITHM \
+                ALLOCATION_SPEC_STEPS ALLOCATION_SPEC_DRAFT_TOKENS MODEL TP EP_SIZE \
+                ALLOCATION_MODEL_REVISION ALLOCATION_MODEL_MANIFEST \
+                ALLOCATION_MODEL_MANIFEST_SHA256 ALLOCATION_DATASET_PATH \
+                ALLOCATION_DATASET_REVISION ALLOCATION_DATASET_MANIFEST_SHA256
+            allocation_args=()
+            ;;
         *) echo "ALLOCATION_VALIDATE_ONLY must be true or false" >&2; exit 1 ;;
     esac
     exec python3 utils/allocation_guard.py \

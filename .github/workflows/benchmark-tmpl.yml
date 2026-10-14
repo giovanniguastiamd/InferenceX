@@ -24,6 +24,36 @@ on:
       allocation-validate-only:
         type: boolean
         default: true
+      allocation-image-digest:
+        type: string
+        default: ''
+      allocation-spec-algorithm:
+        type: string
+        default: ''
+      allocation-spec-steps:
+        type: string
+        default: ''
+      allocation-spec-draft-tokens:
+        type: string
+        default: ''
+      allocation-model-revision:
+        type: string
+        default: ''
+      allocation-model-manifest:
+        type: string
+        default: ''
+      allocation-model-manifest-sha256:
+        type: string
+        default: ''
+      allocation-dataset-path:
+        type: string
+        default: ''
+      allocation-dataset-revision:
+        type: string
+        default: ''
+      allocation-dataset-manifest-sha256:
+        type: string
+        default: ''
       config:
         description: "Benchmark configuration as JSON"
         required: true
@@ -115,6 +145,16 @@ env:
   ALLOCATION_MODEL_PATH: ${{ inputs.allocation-model-path }}
   ALLOCATION_HF_HOME: ${{ inputs.allocation-hf-home }}
   ALLOCATION_VALIDATE_ONLY: ${{ inputs.allocation-validate-only && 'true' || 'false' }}
+  ALLOCATION_IMAGE_DIGEST: ${{ inputs.allocation-image-digest }}
+  ALLOCATION_SPEC_ALGORITHM: ${{ inputs.allocation-spec-algorithm }}
+  ALLOCATION_SPEC_STEPS: ${{ inputs.allocation-spec-steps }}
+  ALLOCATION_SPEC_DRAFT_TOKENS: ${{ inputs.allocation-spec-draft-tokens }}
+  ALLOCATION_MODEL_REVISION: ${{ inputs.allocation-model-revision }}
+  ALLOCATION_MODEL_MANIFEST: ${{ inputs.allocation-model-manifest }}
+  ALLOCATION_MODEL_MANIFEST_SHA256: ${{ inputs.allocation-model-manifest-sha256 }}
+  ALLOCATION_DATASET_PATH: ${{ inputs.allocation-dataset-path }}
+  ALLOCATION_DATASET_REVISION: ${{ inputs.allocation-dataset-revision }}
+  ALLOCATION_DATASET_MANIFEST_SHA256: ${{ inputs.allocation-dataset-manifest-sha256 }}
   PORT: '8888'
   INFMAX_CONTAINER_WORKSPACE: '/workspace'
   DSV41_MIN_CUDAGRAPH_CAPTURE_SIZE: '1'
@@ -381,7 +421,13 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: allocation-${{ github.run_id }}-${{ github.run_attempt }}
-          path: allocation-evidence.json
+          path: |
+            allocation-evidence.json
+            allocation-server-expected.json
+            allocation-server-validation.json
+            allocation-model-validation.json
+            allocation-dataset-validation.json
+            allocation-dataset-manifest.json
           if-no-files-found: error
 
       - name: Upload result

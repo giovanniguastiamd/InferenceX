@@ -17,6 +17,14 @@ on:
         description: Check allocation and model files without starting a container
         type: boolean
         default: true
+      image-digest:
+        description: Expected registry digest (sha256), mandatory for real execution
+        type: string
+        default: ''
+      dataset-manifest-sha256:
+        description: SHA256 of the exported pinned dataset manifest, mandatory for real execution
+        type: string
+        default: ''
 permissions:
   contents: read
 concurrency:
@@ -30,6 +38,8 @@ jobs:
       job-id: ${{ steps.request.outputs.job-id }}
       node: ${{ steps.request.outputs.node }}
       validate-only: ${{ steps.request.outputs.validate-only }}
+      image-digest: ${{ steps.request.outputs.image-digest }}
+      dataset-manifest-sha256: ${{ steps.request.outputs.dataset-manifest-sha256 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -40,6 +50,8 @@ jobs:
           REQUEST_JOB: ${{ inputs.job-id }}
           REQUEST_NODE: ${{ inputs.node }}
           REQUEST_VALIDATE: ${{ inputs.validate-only }}
+          REQUEST_DIGEST: ${{ inputs.image-digest }}
+          REQUEST_DATASET_MANIFEST: ${{ inputs.dataset-manifest-sha256 }}
           EVENT: ${{ github.event_name }}
         run: |
           python3 - <<'PY'
@@ -48,12 +60,20 @@ jobs:
               request = json.load(open('.github/allocation-request.json'))
           else:
               request = {'job-id': os.environ['REQUEST_JOB'], 'node': os.environ['REQUEST_NODE'],
-                         'validate-only': os.environ['REQUEST_VALIDATE'] == 'true'}
+                         'validate-only': os.environ['REQUEST_VALIDATE'] == 'true',
+                         'image-digest': os.environ['REQUEST_DIGEST'],
+                         'dataset-manifest-sha256': os.environ['REQUEST_DATASET_MANIFEST']}
           assert re.fullmatch(r'[0-9]+', request['job-id']), 'Invalid job ID'
           assert re.fullmatch(r'[a-zA-Z0-9-]+', request['node']), 'Invalid node'
           assert isinstance(request['validate-only'], bool), 'Invalid mode'
+          request.setdefault('image-digest', '')
+          request.setdefault('dataset-manifest-sha256', '')
+          assert isinstance(request['image-digest'], str), 'Invalid digest'
+          if not request['validate-only']:
+              assert re.fullmatch(r'sha256:[0-9a-f]{64}', request['image-digest']), 'Real execution requires image-digest'
+              assert re.fullmatch(r'[0-9a-f]{64}', request['dataset-manifest-sha256']), 'Real execution requires dataset-manifest-sha256'
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
-              for key in ('job-id', 'node', 'validate-only'):
+              for key in ('job-id', 'node', 'validate-only', 'image-digest', 'dataset-manifest-sha256'):
                   value = request[key]
                   f.write(key + '=' + (str(value).lower() if isinstance(value, bool) else value) + '\n')
           PY
@@ -94,3 +114,13 @@ jobs:
       allocation-model-path: /share_nfs/models/amd/GLM-5.2-MXFP4
       allocation-hf-home: /share_nfs/gguasti/inferencex/cache/huggingface
       allocation-validate-only: ${{ fromJSON(needs.prepare.outputs.validate-only) }}
+      allocation-image-digest: ${{ needs.prepare.outputs.image-digest }}
+      allocation-spec-algorithm: EAGLE
+      allocation-spec-steps: '5'
+      allocation-spec-draft-tokens: '6'
+      allocation-model-revision: 386bd0e4ec821f7b07975701cec3c3b953a5576a
+      allocation-model-manifest: campaign/glm52-model-manifest.json
+      allocation-model-manifest-sha256: ff7e8c53ef7567f349e8ccff03ad77956ec55297c95550b2600aedc77b73b56b
+      allocation-dataset-path: /share_nfs/gguasti/inferencex/datasets/cc-traces-weka-062126-23f152f6f0f9399a85901b89a6458def0ef16729
+      allocation-dataset-revision: 23f152f6f0f9399a85901b89a6458def0ef16729
+      allocation-dataset-manifest-sha256: ${{ needs.prepare.outputs.dataset-manifest-sha256 }}
