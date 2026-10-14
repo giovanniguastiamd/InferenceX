@@ -35,6 +35,8 @@ UID/GID 和明确的 GPU 设备，不使用 privileged 模式。资源分配证�
 写死在该目录。原始调优输入仍从镜像读取，由 AITER 自身执行合并。
 设置 `USER` 和 `LOGNAME`，以便在数字容器 UID 下调用 `getpass.getuser()` 的库
 获得用户名称；TorchInductor 也使用 `/tmp` 下的私有缓存。
+`FLYDSL_RUNTIME_CACHE_DIR` 同样选择私有 FlyDSL 缓存；否则 AITER 会在导入时
+选择镜像中 root 所有的 FlyDSL 缓存。
 清理允许容器已被 Docker 的 `--rm` 删除；其他清理错误仍会显示。
 
 ## 实际配置检查（M2e）

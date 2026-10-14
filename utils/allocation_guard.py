@@ -79,6 +79,7 @@ def container_command(env, name, recipe):
             args += ["-e", key]
     args += ["-e", "MODEL_PATH=/model", "-e", "HF_HOME=/hf", "-e", "HF_HUB_CACHE=/hf/hub",
              "-e", "AITER_JIT_DIR=/tmp/inferencex-aiter-jit",
+             "-e", "FLYDSL_RUNTIME_CACHE_DIR=/tmp/inferencex-flydsl-cache",
              "-e", "USER=inferencex", "-e", "LOGNAME=inferencex",
              "-e", "TORCHINDUCTOR_CACHE_DIR=/tmp/inferencex-torchinductor-cache",
              "-e", "HOME=/tmp/inferencex-home", "-e", "SLURM_JOB_ID=" + env["ALLOCATION_JOB_ID"],

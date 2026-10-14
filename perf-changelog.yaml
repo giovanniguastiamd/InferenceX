@@ -8794,3 +8794,12 @@
     - "Mount a writable tmpfs at AITER's fixed /tmp/aiter_configs output directory in allocation containers. Preserve native tuning inputs and merge logic; packaged root-owned output files otherwise stop startup before readiness under the operator UID."
     - "资源分配容器在 AITER 固定的 /tmp/aiter_configs 输出目录挂载可写 tmpfs。保留原生调优输入与合并逻辑；镜像中 root 所有的输出文件会导致操作者 UID 下服务就绪前的启动失败。"
   pr-link: https://github.com/SemiAnalysisAI/InferenceX/pull/XXX
+
+- config-keys:
+    - glm5.2-fp4-mi355x-sglang-agentic-mtp
+  scenario-type:
+    - agentic-coding
+  description:
+    - "Select a private writable FlyDSL runtime cache for allocation containers with the native FLYDSL_RUNTIME_CACHE_DIR override. AITER otherwise selects unreadable root-owned packaged cache files, failing GPU graph capture. Preserve kernel sources and tuning inputs; compilation stays before measurement."
+    - "通过原生 FLYDSL_RUNTIME_CACHE_DIR 为资源分配容器选择私有可写 FlyDSL 运行缓存。否则 AITER 选择不可读的 root 所有镜像缓存文件，导致 GPU 图捕获失败。保留内核源码和调优输入；编译在测量前完成。"
+  pr-link: https://github.com/SemiAnalysisAI/InferenceX/pull/XXX

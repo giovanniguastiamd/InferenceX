@@ -44,8 +44,10 @@ and `/tmp/aiter_configs` uses a writable tmpfs for AITER's generated CSV merges,
 whose output path is fixed in the pinned image. The original tuning inputs are
 still read from the image and merged by AITER itself. `USER` and `LOGNAME` are
 set for libraries that call `getpass.getuser()` with a numeric container UID;
-TorchInductor also uses a private cache under `/tmp`. Compilation occurs
-before readiness and measurement. Cleanup tolerates a container already removed
+TorchInductor also uses a private cache under `/tmp`. FlyDSL compilation uses
+a private cache selected with `FLYDSL_RUNTIME_CACHE_DIR` as well;
+AITER otherwise selects its packaged, root-owned FlyDSL cache at import time.
+Compilation occurs before readiness and measurement. Cleanup tolerates a container already removed
 by Docker's `--rm`; other cleanup errors remain visible.
 
 ## Effective configuration gate (M2e)
