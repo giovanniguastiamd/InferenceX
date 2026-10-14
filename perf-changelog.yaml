@@ -8785,3 +8785,12 @@
     - "Use the native AITER_JIT_DIR override for private writable compilation in the allocation container. The pinned ROCm image has unreadable packaged flydsl cache files that otherwise kill startup under the operator UID. Image and kernel source are unchanged; compilation occurs before measurement."
     - "资源分配容器使用原生 AITER_JIT_DIR 设置，在私有可写目录中编译。固定 ROCm 镜像中不可读的 flydsl 缓存文件会导致操作者 UID 下的启动失败。镜像和内核源码保持不变；编译在测量前完成。"
   pr-link: https://github.com/SemiAnalysisAI/InferenceX/pull/XXX
+
+- config-keys:
+    - glm5.2-fp4-mi355x-sglang-agentic-mtp
+  scenario-type:
+    - agentic-coding
+  description:
+    - "Mount a writable tmpfs at AITER's fixed /tmp/aiter_configs output directory in allocation containers. Preserve native tuning inputs and merge logic; packaged root-owned output files otherwise stop startup before readiness under the operator UID."
+    - "资源分配容器在 AITER 固定的 /tmp/aiter_configs 输出目录挂载可写 tmpfs。保留原生调优输入与合并逻辑；镜像中 root 所有的输出文件会导致操作者 UID 下服务就绪前的启动失败。"
+  pr-link: https://github.com/SemiAnalysisAI/InferenceX/pull/XXX

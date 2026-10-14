@@ -51,6 +51,7 @@ def container_command(env, name, recipe):
             "--label", "spur_job_id=" + env["ALLOCATION_JOB_ID"],
             "--security-opt", "seccomp=unconfined", "--network=host", "--ipc=host",
             "--shm-size=64g", "--device=/dev/kfd", "--device=/dev/dri",
+            "--tmpfs=/tmp/aiter_configs:rw,mode=1777",
             "--group-add=video", "--group-add=render",
             "--user", f"{os.getuid()}:{os.getgid()}",
             "--mount", f"type=bind,src={workspace},dst=/workspace",
@@ -78,6 +79,8 @@ def container_command(env, name, recipe):
             args += ["-e", key]
     args += ["-e", "MODEL_PATH=/model", "-e", "HF_HOME=/hf", "-e", "HF_HUB_CACHE=/hf/hub",
              "-e", "AITER_JIT_DIR=/tmp/inferencex-aiter-jit",
+             "-e", "USER=inferencex", "-e", "LOGNAME=inferencex",
+             "-e", "TORCHINDUCTOR_CACHE_DIR=/tmp/inferencex-torchinductor-cache",
              "-e", "HOME=/tmp/inferencex-home", "-e", "SLURM_JOB_ID=" + env["ALLOCATION_JOB_ID"],
              "-e", "ALLOCATION_DATASET_PATH=/dataset",
              "-e", "SLURMD_NODENAME=" + env["ALLOCATION_NODE"],

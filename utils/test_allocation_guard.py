@@ -76,6 +76,7 @@ class AllocationGuardTests(unittest.TestCase):
         self.assertIn('OPENAI_API_KEY', argv)
         self.assertNotIn('--privileged', argv)
         self.assertIn('AITER_JIT_DIR=/tmp/inferencex-aiter-jit', argv)
+        self.assertIn('--tmpfs=/tmp/aiter_configs:rw,mode=1777', argv)
 
     def test_allocation_loss_stops_only_this_container(self):
         child = Mock()

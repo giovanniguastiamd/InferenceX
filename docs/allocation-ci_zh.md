@@ -31,6 +31,10 @@ UID/GID 和明确的 GPU 设备，不使用 privileged 模式。资源分配证�
 固定的 ROCm 镜像含有不可读的 AITER 构建缓存文件。资源分配容器设置原生
 `AITER_JIT_DIR=/tmp/inferencex-aiter-jit`，在私有可写目录中构建，避免 AITER
 自动复制该缓存。内核和镜像文件保持不变。编译发生在服务就绪与测量之前的启动阶段。
+`/tmp/aiter_configs` 使用可写 tmpfs 存储 AITER 合并生成的 CSV，固定镜像将输出路径
+写死在该目录。原始调优输入仍从镜像读取，由 AITER 自身执行合并。
+设置 `USER` 和 `LOGNAME`，以便在数字容器 UID 下调用 `getpass.getuser()` 的库
+获得用户名称；TorchInductor 也使用 `/tmp` 下的私有缓存。
 清理允许容器已被 Docker 的 `--rm` 删除；其他清理错误仍会显示。
 
 ## 实际配置检查（M2e）

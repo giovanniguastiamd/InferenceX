@@ -40,6 +40,11 @@ The pinned ROCm image contains unreadable AITER build-cache files. The allocatio
 container sets the native `AITER_JIT_DIR=/tmp/inferencex-aiter-jit` override to
 build in a private writable directory, avoiding AITER's automatic copy of that
 cache. Kernels and image files are unchanged. Compilation is part of startup,
+and `/tmp/aiter_configs` uses a writable tmpfs for AITER's generated CSV merges,
+whose output path is fixed in the pinned image. The original tuning inputs are
+still read from the image and merged by AITER itself. `USER` and `LOGNAME` are
+set for libraries that call `getpass.getuser()` with a numeric container UID;
+TorchInductor also uses a private cache under `/tmp`. Compilation occurs
 before readiness and measurement. Cleanup tolerates a container already removed
 by Docker's `--rm`; other cleanup errors remain visible.
 
