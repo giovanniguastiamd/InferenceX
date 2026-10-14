@@ -44,6 +44,8 @@ def container_command(env, name, recipe):
     model = str(Path(env["ALLOCATION_MODEL_PATH"]).resolve())
     cache = str(Path(env["ALLOCATION_HF_HOME"]).resolve())
     dataset = str(Path(env["ALLOCATION_DATASET_PATH"]).resolve())
+    arrow_relative = ('semianalysisai___cc-traces-weka-062126/default/0.0.0/'
+                      + env['ALLOCATION_DATASET_REVISION'])
     if any(',' in p or '\n' in p for p in (workspace, model, cache, dataset)):
         raise ValueError("Unsupported mount path")
     args = ["docker", "create", "--rm", "--name", name,
@@ -52,11 +54,14 @@ def container_command(env, name, recipe):
             "--security-opt", "seccomp=unconfined", "--network=host", "--ipc=host",
             "--shm-size=64g", "--device=/dev/kfd", "--device=/dev/dri",
             "--tmpfs=/tmp/aiter_configs:rw,mode=1777",
+            "--tmpfs=/tmp/inferencex-hf-datasets:rw,mode=1777",
             "--group-add=video", "--group-add=render",
             "--user", f"{os.getuid()}:{os.getgid()}",
             "--mount", f"type=bind,src={workspace},dst=/workspace",
             "--mount", f"type=bind,src={model},dst=/model,readonly",
             "--mount", f"type=bind,src={dataset},dst=/dataset,readonly",
+            "--mount", (f"type=bind,src={dataset}/hf/datasets/{arrow_relative},"
+                        f"dst=/tmp/inferencex-hf-datasets/{arrow_relative},readonly"),
             "--mount", f"type=bind,src={cache},dst=/hf", "-w", "/workspace"]
     names = env["INFERENCEX_RUNTIME_ENV_VARS"].split() + """
         MODEL MODEL_PREFIX THINKING_MODE IMAGE FRAMEWORK PRECISION EXP_NAME
@@ -77,7 +82,9 @@ def container_command(env, name, recipe):
     for key in dict.fromkeys(names):
         if key in env:
             args += ["-e", key]
-    args += ["-e", "MODEL_PATH=/model", "-e", "HF_HOME=/hf", "-e", "HF_HUB_CACHE=/hf/hub",
+    args += ["-e", "MODEL_PATH=/model", "-e", "HF_HOME=/hf",
+             "-e", "HF_HUB_CACHE=/dataset/hf/hub", "-e", "HF_DATASETS_CACHE=/tmp/inferencex-hf-datasets",
+             "-e", "HF_HUB_OFFLINE=1", "-e", "HF_DATASETS_OFFLINE=1",
              "-e", "AITER_JIT_DIR=/tmp/inferencex-aiter-jit",
              "-e", "FLYDSL_RUNTIME_CACHE_DIR=/tmp/inferencex-flydsl-cache",
              "-e", "USER=inferencex", "-e", "LOGNAME=inferencex",
@@ -119,6 +126,7 @@ def execute(env, recipe, validate_only=False):
     try:
         (path.parent / "allocation-server-validation.json").unlink(missing_ok=True)
         (path.parent / "allocation-server-expected.json").unlink(missing_ok=True)
+        (path.parent / "allocation-replay-validation.json").unlink(missing_ok=True)
         for label in ('model', 'dataset'):
             (path.parent / f'allocation-{label}-validation.json').unlink(missing_ok=True)
         (path.parent / 'allocation-dataset-manifest.json').unlink(missing_ok=True)
@@ -176,10 +184,25 @@ def _execute(env, recipe, validate_only, evidence, path):
                                       env['ALLOCATION_DATASET_REVISION'],
                                       env['ALLOCATION_DATASET_MANIFEST_SHA256'], lambda: check(job, node))
     manifest = json.loads((dataset / 'manifest.json').read_text())
-    declared_traces = {item['path'] for item in manifest['files']}
+    if manifest.get('offline_cache') is not True:
+        raise ValueError('Dataset requires a verified isolated offline HF cache')
+    declared_files = {item['path'] for item in manifest['files']}
+    actual_files = {p.relative_to(dataset).as_posix() for p in dataset.rglob('*') if p.is_file()}
+    if actual_files != declared_files | {'manifest.json'}:
+        raise ValueError('Dataset offline cache differs from the verified manifest')
+    if any(p.is_symlink() for p in dataset.rglob('*')):
+        raise ValueError('Dataset offline cache must not contain symlinks')
+    declared_traces = {p for p in declared_files if p.startswith('traces/')}
     actual_traces = {'traces/' + p.name for p in (dataset / 'traces').glob('*.json')}
     if declared_traces != actual_traces:
         raise ValueError('Dataset trace directory differs from the verified manifest')
+    hub = dataset / 'hf/hub/datasets--semianalysisai--cc-traces-weka-062126'
+    snapshots = {p.name for p in (hub / 'snapshots').iterdir()}
+    arrow = dataset / 'hf/datasets/semianalysisai___cc-traces-weka-062126/default/0.0.0'
+    if snapshots != {env['ALLOCATION_DATASET_REVISION']} or {p.name for p in arrow.iterdir()} != snapshots:
+        raise ValueError('Dataset cache must contain only the requested revision')
+    if (hub / 'refs/main').read_text() != env['ALLOCATION_DATASET_REVISION']:
+        raise ValueError('Dataset offline main reference differs from requested revision')
     if evidence['dataset']['repo'] != 'semianalysisai/cc-traces-weka-062126':
         raise ValueError('The dedicated GLM baseline requires the full 062126 corpus')
     if evidence['model']['repo'] != env['MODEL']:
@@ -228,6 +251,13 @@ def _execute(env, recipe, validate_only, evidence, path):
             validation = json.loads((workspace / "allocation-server-validation.json").read_text())
             if validation.get("valid") is not True:
                 raise ValueError("Missing successful effective-server validation")
+            replay = json.loads((workspace / 'allocation-replay-validation.json').read_text())
+            if replay.get('valid') is not True or replay.get('submission_valid') is not True:
+                raise ValueError('Missing successful replay preflight')
+            if (replay.get('revision') != env['ALLOCATION_DATASET_REVISION']
+                    or replay.get('repo') != evidence['dataset']['repo']):
+                raise ValueError('Replay preflight corpus identity differs from file proof')
+            evidence['replay'] = replay
         evidence["status"] = "completed" if child.returncode == 0 else "failed"
         return child.returncode
     finally:

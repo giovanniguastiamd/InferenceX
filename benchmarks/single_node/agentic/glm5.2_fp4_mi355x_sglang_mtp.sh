@@ -44,7 +44,7 @@ done
  
 resolve_trace_source
 install_agentic_deps
- 
+
 SERVER_LOG="$RESULT_DIR/server.log"
 ROUTER_LOG="$RESULT_DIR/router.log"
 mkdir -p "$RESULT_DIR"
@@ -176,6 +176,15 @@ if [ "${EVAL_ONLY}" != "true" ]; then
     export SGLANG_SIMULATE_ACC_TOKEN_MODE=real-draft-token
 fi
  
+if [[ -n "${ALLOCATION_DATASET_PATH:-}" ]]; then
+    check_env_vars ALLOCATION_DATASET_PATH
+    build_replay_cmd "$RESULT_DIR"
+    REPLAY_CMD+=" --server-metrics http://localhost:$SGLANG_BACKEND_PORT/metrics"
+    "$AIPERF_PYTHON" "$INFMAX_CONTAINER_WORKSPACE/utils/verify_replay.py" \
+        --command "$REPLAY_CMD" --dataset-root "$ALLOCATION_DATASET_PATH" \
+        --report "$INFMAX_CONTAINER_WORKSPACE/allocation-replay-validation.json"
+fi
+
 SGLANG_CMD=(
     python3 -m sglang.launch_server
     --model-path "$MODEL_PATH"

@@ -8812,3 +8812,12 @@
     - "Give allocation containers an explicit image-tool PATH without /root/.cargo/bin, which is inaccessible under the operator UID. TorchInductor's ROCm repro metadata probes absent nvcc and must receive FileNotFoundError rather than PermissionError. Preserve actual venv and ROCm tools."
     - "为资源分配容器设置明确的镜像工具 PATH，去除操作者 UID 无法访问的 /root/.cargo/bin。TorchInductor 的 ROCm 复现元数据探测不存在的 nvcc，需要收到 FileNotFoundError 而不是 PermissionError。保留实际 venv 和 ROCm 工具。"
   pr-link: https://github.com/SemiAnalysisAI/InferenceX/pull/XXX
+
+- config-keys:
+    - glm5.2-fp4-mi355x-sglang-agentic-mtp
+  scenario-type:
+    - agentic-coding
+  description:
+    - "Use the accepted public Weka loader with an isolated revision-pinned offline HF/Arrow cache in allocation CI. Preserve verified read-only corpus files, give runtime locks private tmpfs, and validate the actual replay command and decoded rows before server startup. The local weka_trace loader fails AgentX submission validation."
+    - "资源分配 CI 使用允许的公开 Weka loader 和隔离、固定 revision 的离线 HF/Arrow cache。保留已验证的只读语料文件，为运行时 lock 提供私有 tmpfs，并在服务启动前验证实际 replay 命令和解码行。本地 weka_trace loader 无法通过 AgentX 提交验证。"
+  pr-link: https://github.com/SemiAnalysisAI/InferenceX/pull/XXX

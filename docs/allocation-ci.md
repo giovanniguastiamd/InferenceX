@@ -114,14 +114,33 @@ python utils/prepare_dataset.py \
 ```
 
 The destination must not exist. The export preserves row order in numbered
-JSON filenames and emits `manifest.json` plus its SHA256. Supply that digest
-as `dataset-manifest-sha256` in the request/dispatch. The guard checks all
-listed bytes and rejects extra trace JSON files, mounts the corpus read-only
-at `/dataset`, and the recipe selects AIPerf's native
-`--input-file /dataset/traces --custom-dataset-type weka_trace` path. No mutable
-public-dataset download occurs in this allocation path. AIPerf retains its
-existing Weka reconstruction, context filtering and trace selection behavior;
-end-to-end consumption remains to be demonstrated by the real CI run.
+JSON filenames and emits `manifest.json` plus its SHA256. AgentX rejects the
+local `weka_trace` loader for submission, even with external integrity proof.
+Prepare an isolated HF cache from the pinned export and its prepared Arrow cache:
+
+```bash
+python -m utils.prepare_offline_dataset \
+  --export /path/to/pinned-export --cache /path/to/huggingface \
+  --output /path/to/new-offline-corpus \
+  --export-manifest-sha256 <SHA256-of-export-manifest>
+```
+
+This copies only the requested HF/Arrow revision, compares every decoded row
+with the independently pinned export, and hashes every copied file. Supply
+the new manifest SHA256 as `dataset-manifest-sha256`; point the dedicated
+workflow's dataset path at the new directory. The guard rejects unlisted files,
+symlinks, alternative revisions and a mismatched `refs/main`.
+
+The corpus and HF snapshot are mounted read-only at `/dataset`.
+`HF_HUB_OFFLINE=1` and `HF_DATASETS_OFFLINE=1` prevent mutable HF downloads.
+`HF_DATASETS_CACHE` points to a private tmpfs for HF's runtime lock, with the
+verified Arrow revision mounted read-only below it. The recipe selects
+`--public-dataset semianalysis_cc_traces_weka_062126`, retaining native Weka
+reconstruction and selection. Before server startup, `utils/verify_replay.py`
+parses the actual replay command, applies AIPerf's scenario resolver, validates
+Weka rows and compares them against the export hashes. The separately uploaded
+`allocation-replay-validation.json` must report `submission_valid=true`.
+Successful preflight does not prove completed warmup or measured requests.
 The replay tokenizer is also loaded from the verified `/model` mount instead
 of resolving the HF repository's current revision independently.
 

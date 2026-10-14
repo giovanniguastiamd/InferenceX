@@ -425,6 +425,7 @@ jobs:
             allocation-evidence.json
             allocation-server-expected.json
             allocation-server-validation.json
+            allocation-replay-validation.json
             allocation-model-validation.json
             allocation-dataset-validation.json
             allocation-dataset-manifest.json

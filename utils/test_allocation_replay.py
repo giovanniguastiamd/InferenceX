@@ -23,6 +23,8 @@ class AllocationReplayTests(unittest.TestCase):
                    AIPERF_USE_DYNAMO_CONV_AWARE_ROUTING='false', AIPERF_WARMUP_REQUESTS_PER_LANE='1',
                    ALLOCATION_MODEL_REVISION='a' * 40, MODEL_PATH='/model', ALLOCATION_DATASET_PATH='/dataset',
                    ALLOCATION_DATASET_REVISION='b' * 40, ALLOCATION_DATASET_MANIFEST_SHA256='c' * 64,
+                   HF_HUB_OFFLINE='1', HF_DATASETS_OFFLINE='1', HF_HUB_CACHE='/dataset/hf/hub',
+                   HF_DATASETS_CACHE='/tmp/inferencex-hf-datasets',
                    MSYS2_ARG_CONV_EXCL='*')
         with tempfile.TemporaryDirectory() as tmp:
             env.update(PYTHONPYCACHEPREFIX=tmp, AIPERF_RUNTIME_DIR=tmp)
@@ -34,11 +36,17 @@ class AllocationReplayTests(unittest.TestCase):
         command = next(line[7:] for line in result.stdout.splitlines() if line.startswith('REPLAY:'))
         args = shlex.split(command)
         self.assertEqual(args[args.index('--tokenizer') + 1], '/model')
-        self.assertEqual(args[args.index('--input-file') + 1], '/dataset/traces')
-        self.assertEqual(args[args.index('--custom-dataset-type') + 1], 'weka_trace')
+        self.assertEqual(args[args.index('--public-dataset') + 1], 'semianalysis_cc_traces_weka_062126')
         self.assertEqual(args[args.index('--model') + 1], 'org/model')
         self.assertEqual(args[args.index('--benchmark-duration') + 1], '3600')
-        self.assertNotIn('--public-dataset', args)
+        self.assertNotIn('--input-file', args)
+        self.assertNotIn('--unsafe-override', args)
+        env['HF_HUB_OFFLINE'] = '0'
+        result = subprocess.run([bash, '-c', 'source "$1"; resolve_trace_source',
+                                 'bash', str(root / 'benchmarks/benchmark_lib.sh')],
+                                env=env, capture_output=True, text=True, encoding='utf-8', timeout=30)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('offline mode', result.stderr)
 
 
 if __name__ == '__main__':

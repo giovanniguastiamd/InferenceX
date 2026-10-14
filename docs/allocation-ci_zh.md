@@ -87,12 +87,29 @@ python utils/prepare_dataset.py \
   --output /share_nfs/gguasti/inferencex/datasets/cc-traces-weka-062126-23f152f6f0f9399a85901b89a6458def0ef16729
 ```
 
-目标目录必须不存在。导出用编号 JSON 文件保留原始行顺序，生成 `manifest.json`
-和 SHA256。在请求或手动触发输入中提供 `dataset-manifest-sha256`。
-检查程序验证全部文件字节并拒绝额外 trace JSON，以只读方式挂载到 `/dataset`。
-配方选择 AIPerf 原生 `--input-file /dataset/traces --custom-dataset-type weka_trace`
-路径；此资源分配路径不再下载可变的公开数据集。仍使用现有 Weka 重建、上下文过滤
-和 trace 选择逻辑；实际 CI 中的端到端消费尚待验证。
+目标目录必须不存在。导出使用编号 JSON 文件保留行顺序，生成 manifest 和 SHA256。
+AgentX 不接受本地 weka_trace loader 的正式提交，即使外部工具已验证文件完整性。
+使用固定导出及已准备的 Arrow cache 创建隔离 HF cache：
+
+```bash
+python -m utils.prepare_offline_dataset \
+  --export /path/to/pinned-export --cache /path/to/huggingface \
+  --output /path/to/new-offline-corpus \
+  --export-manifest-sha256 <SHA256-of-export-manifest>
+```
+
+工具仅复制所请求的 HF/Arrow revision，将每个解码行与独立固定的导出比较，并计算
+全部复制文件的 hash。请求中的 dataset-manifest-sha256 使用新清单摘要；专用工作流
+的数据集路径指向新目录。Guard 拒绝未列出的文件、symlink、其他 revision 和错误的 refs/main。
+
+语料及 HF snapshot 以只读方式挂载到 /dataset。HF_HUB_OFFLINE=1 和
+HF_DATASETS_OFFLINE=1 阻止可变下载。HF_DATASETS_CACHE 指向私有 tmpfs，
+用于运行时 lock；其下仅挂载已验证、只读的 Arrow revision。配方选择
+--public-dataset semianalysis_cc_traces_weka_062126，保留原生 Weka 重建及选择逻辑。
+服务启动前，utils/verify_replay.py 解析实际 replay 命令，执行 AIPerf scenario resolver，
+验证 Weka 行并比较导出 hash。单独上传的 allocation-replay-validation.json 必须报告
+submission_valid=true。预检查成功不代表 warmup 或测量请求已经完成。
+
 Replay tokenizer 也从已验证的 `/model` 挂载读取，不再独立解析 HF 仓库的当前版本。
 
 `allocation-model-validation.json` 和 `allocation-dataset-validation.json` 与资源分配

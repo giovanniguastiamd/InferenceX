@@ -3169,9 +3169,16 @@ ensure_hf_cli() {
 resolve_trace_source() {
     if [[ -n "${ALLOCATION_DATASET_PATH:-}" ]]; then
         check_env_vars ALLOCATION_DATASET_PATH ALLOCATION_DATASET_REVISION \
-            ALLOCATION_DATASET_MANIFEST_SHA256
-        TRACE_SOURCE_FLAG="--input-file $ALLOCATION_DATASET_PATH/traces --custom-dataset-type weka_trace"
-        echo "Using verified local Weka traces at revision $ALLOCATION_DATASET_REVISION"
+            ALLOCATION_DATASET_MANIFEST_SHA256 HF_HUB_OFFLINE HF_DATASETS_OFFLINE \
+            HF_HUB_CACHE HF_DATASETS_CACHE
+        if [[ "$HF_HUB_OFFLINE" != 1 || "$HF_DATASETS_OFFLINE" != 1 \
+              || "$HF_HUB_CACHE" != "$ALLOCATION_DATASET_PATH/hf/hub" \
+              || "$HF_DATASETS_CACHE" != /tmp/inferencex-hf-datasets ]]; then
+            echo "Allocation replay requires the verified isolated HF cache in offline mode" >&2
+            return 1
+        fi
+        TRACE_SOURCE_FLAG="--public-dataset semianalysis_cc_traces_weka_062126"
+        echo "Using offline public Weka loader at verified revision $ALLOCATION_DATASET_REVISION"
         return 0
     fi
     # WEKA_LOADER_OVERRIDE picks an aiperf public-dataset loader for recipes

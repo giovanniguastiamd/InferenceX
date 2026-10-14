@@ -37,6 +37,20 @@ class AllocationGuardTests(unittest.TestCase):
         from utils.prepare_dataset import export_rows
         dataset = root / 'dataset'
         exported = export_rows([{'id': 'trace'}], dataset, 'semianalysisai/cc-traces-weka-062126', 'e' * 40, 'fp')
+        hub = dataset / 'hf/hub/datasets--semianalysisai--cc-traces-weka-062126'
+        (hub / 'snapshots' / ('e' * 40)).mkdir(parents=True)
+        (hub / 'refs').mkdir()
+        (hub / 'refs/main').write_text('e' * 40)
+        arrow = dataset / 'hf/datasets/semianalysisai___cc-traces-weka-062126/default/0.0.0' / ('e' * 40)
+        arrow.mkdir(parents=True)
+        (arrow / 'data.arrow').write_bytes(b'arrow')
+        dataset_manifest = json.loads((dataset / 'manifest.json').read_text())
+        dataset_manifest['offline_cache'] = True
+        for name, raw in [('hf/hub/datasets--semianalysisai--cc-traces-weka-062126/refs/main', b'e' * 40),
+                          (('hf/datasets/semianalysisai___cc-traces-weka-062126/default/0.0.0/' + 'e' * 40 + '/data.arrow'), b'arrow')]:
+            dataset_manifest['files'].append(dict(path=name, size=len(raw), algorithm='sha256', digest=hashlib.sha256(raw).hexdigest()))
+        (dataset / 'manifest.json').write_text(json.dumps(dataset_manifest))
+        exported['manifest_sha256'] = hashlib.sha256((dataset / 'manifest.json').read_bytes()).hexdigest()
         self.env = dict(ALLOCATION_JOB_ID='42', ALLOCATION_NODE='g10',
                         ALLOCATION_MODEL_PATH=str(model), ALLOCATION_HF_HOME=str(root),
                         GITHUB_WORKSPACE=str(root), GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1',
@@ -78,6 +92,12 @@ class AllocationGuardTests(unittest.TestCase):
         self.assertIn('AITER_JIT_DIR=/tmp/inferencex-aiter-jit', argv)
         self.assertIn('FLYDSL_RUNTIME_CACHE_DIR=/tmp/inferencex-flydsl-cache', argv)
         self.assertIn('--tmpfs=/tmp/aiter_configs:rw,mode=1777', argv)
+        self.assertIn('HF_HUB_OFFLINE=1', argv)
+        self.assertIn('HF_DATASETS_OFFLINE=1', argv)
+        self.assertIn('HF_HUB_CACHE=/dataset/hf/hub', argv)
+        self.assertIn('HF_DATASETS_CACHE=/tmp/inferencex-hf-datasets', argv)
+        self.assertIn('--tmpfs=/tmp/inferencex-hf-datasets:rw,mode=1777', argv)
+        self.assertTrue(any(v.endswith('dst=/dataset,readonly') for v in argv))
 
     def test_allocation_loss_stops_only_this_container(self):
         child = Mock()
@@ -150,6 +170,9 @@ class AllocationGuardTests(unittest.TestCase):
         child.poll.return_value = 0
         def started(*args, **kwargs):
             path.write_text('{"valid": true, "checks": []}')
+            (path.parent / 'allocation-replay-validation.json').write_text(
+                json.dumps({'valid': True, 'submission_valid': True, 'revision': 'e' * 40,
+                            'repo': 'semianalysisai/cc-traces-weka-062126'}))
             return child
         with patch.object(guard, 'check', return_value={'JobId': '42'}), \
              patch.object(guard, 'output', side_effect=['b' * 40, '', 'sha256:' + 'd' * 64]), \
@@ -165,6 +188,7 @@ class AllocationGuardTests(unittest.TestCase):
         self.assertEqual(data['server_expected']['speculative_num_draft_tokens'], 6)
         self.assertEqual(data['model']['files_verified'], 1)
         self.assertEqual(data['dataset']['revision'], 'e' * 40)
+        self.assertIs(data['replay']['submission_valid'], True)
 
     def test_failed_preflight_still_records_execution_identity(self):
         with patch.object(guard, 'check', side_effect=ValueError('not owned')):
@@ -195,9 +219,30 @@ class AllocationGuardTests(unittest.TestCase):
                 with patch.object(guard, 'check', return_value={}), \
                      patch.object(guard, 'output', side_effect=['commit', '']), \
                      patch.object(guard, 'resolve_image') as pull:
-                    with self.assertRaisesRegex(ValueError, 'hash mismatch|trace directory'):
+                    with self.assertRaisesRegex(ValueError, 'hash mismatch|offline cache'):
                         guard.execute(self.env, 'recipe.sh')
                     pull.assert_not_called()
+
+    def test_unlisted_cache_file_or_alternative_snapshot_blocks_before_pull(self):
+        dataset = Path(self.env['ALLOCATION_DATASET_PATH'])
+        for target in ('hf/datasets/extra.arrow',
+                       'hf/hub/datasets--semianalysisai--cc-traces-weka-062126/snapshots/' + 'f' * 40):
+            with self.subTest(target=target):
+                path = dataset / target
+                if target.endswith('.arrow'):
+                    path.write_bytes(b'extra')
+                else:
+                    path.mkdir()
+                with patch.object(guard, 'check', return_value={}), \
+                     patch.object(guard, 'output', side_effect=['commit', '']), \
+                     patch.object(guard, 'resolve_image') as pull:
+                    with self.assertRaisesRegex(ValueError, 'offline cache|requested revision'):
+                        guard.execute(self.env, 'recipe.sh')
+                    pull.assert_not_called()
+                if path.is_file():
+                    path.unlink()
+                else:
+                    path.rmdir()
 
 
 if __name__ == '__main__':

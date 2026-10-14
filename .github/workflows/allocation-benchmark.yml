@@ -121,6 +121,6 @@ jobs:
       allocation-model-revision: 386bd0e4ec821f7b07975701cec3c3b953a5576a
       allocation-model-manifest: campaign/glm52-model-manifest.json
       allocation-model-manifest-sha256: ff7e8c53ef7567f349e8ccff03ad77956ec55297c95550b2600aedc77b73b56b
-      allocation-dataset-path: /share_nfs/gguasti/inferencex/datasets/cc-traces-weka-062126-23f152f6f0f9399a85901b89a6458def0ef16729
+      allocation-dataset-path: /share_nfs/gguasti/inferencex/datasets/cc-traces-weka-062126-23f152f6f0f9399a85901b89a6458def0ef16729-offline
       allocation-dataset-revision: 23f152f6f0f9399a85901b89a6458def0ef16729
       allocation-dataset-manifest-sha256: ${{ needs.prepare.outputs.dataset-manifest-sha256 }}
