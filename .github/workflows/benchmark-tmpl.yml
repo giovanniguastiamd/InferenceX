@@ -9,6 +9,21 @@ on:
       MODAL_TOKEN_SECRET:
         required: false
     inputs:
+      allocation-job-id:
+        type: string
+        default: ''
+      allocation-node:
+        type: string
+        default: ''
+      allocation-model-path:
+        type: string
+        default: ''
+      allocation-hf-home:
+        type: string
+        default: ''
+      allocation-validate-only:
+        type: boolean
+        default: true
       config:
         description: "Benchmark configuration as JSON"
         required: true
@@ -95,6 +110,11 @@ on:
         type: string
         default: ""
 env:
+  ALLOCATION_JOB_ID: ${{ inputs.allocation-job-id }}
+  ALLOCATION_NODE: ${{ inputs.allocation-node }}
+  ALLOCATION_MODEL_PATH: ${{ inputs.allocation-model-path }}
+  ALLOCATION_HF_HOME: ${{ inputs.allocation-hf-home }}
+  ALLOCATION_VALIDATE_ONLY: ${{ inputs.allocation-validate-only && 'true' || 'false' }}
   PORT: '8888'
   INFMAX_CONTAINER_WORKSPACE: '/workspace'
   DSV41_MIN_CUDAGRAPH_CAPTURE_SIZE: '1'
@@ -163,6 +183,8 @@ jobs:
   benchmark:
     runs-on: >-
       ${{ fromJSON(
+        inputs.allocation-job-id != '' &&
+        format('[{0}]', toJSON(format('allocation-{0}-{1}', inputs.allocation-node, inputs.allocation-job-id))) ||
         vars.PRIORITY_SCHEDULER_ENABLED == 'true' &&
         (
           vars.NODE_SLOT_SCHEDULER_ENABLED == 'true' &&
@@ -213,13 +235,14 @@ jobs:
       c${{ fromJSON(inputs.config).conc }}${{ inputs.eval-only && ' | eval-only' || (inputs.run-eval && ' | eval' || '') }}
     steps:
       - name: Repair root-owned artifacts (pre-run)
-        if: ${{ inputs.runner == 'cluster:mi355x-amds' }}
+        if: ${{ inputs.runner == 'cluster:mi355x-amds' && inputs.allocation-job-id == '' }}
         run: |
           if [[ -d "$GITHUB_WORKSPACE" ]]; then
             sudo chown -R "$(id -u):$(id -g)" "$GITHUB_WORKSPACE"
           fi
 
       - name: Resource cleanup (pre-run)
+        if: ${{ inputs.allocation-job-id == '' }}
         run: &resource-cleanup |
           # Cleanup Docker resources
           if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
@@ -243,6 +266,7 @@ jobs:
           fi
 
       - name: Repair stale git state (pre-run)
+        if: ${{ inputs.allocation-job-id == '' }}
         run: |
           # Interrupted runs leave index.lock files and corrupt submodule git
           # dirs behind in the persistent self-hosted workspace, and both make
@@ -307,6 +331,10 @@ jobs:
           fi
           bash "./runners/launch_${RUNNER_NAME%%_*}.sh"
 
+          if [[ -n "$ALLOCATION_JOB_ID" && "$ALLOCATION_VALIDATE_ONLY" == true ]]; then
+            exit 0
+          fi
+
           if [ "${EVAL_ONLY}" = "true" ]; then
             echo "Eval-only mode: skipping benchmark result file check"
             # Verify eval produced results
@@ -347,6 +375,14 @@ jobs:
             exit 1
           fi
           python3 utils/process_result.py
+
+      - name: Upload allocation evidence
+        if: ${{ always() && inputs.allocation-job-id != '' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: allocation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: allocation-evidence.json
+          if-no-files-found: error
 
       - name: Upload result
         if: ${{ success() && env.RESULT_FILENAME != '' && !inputs.eval-only && inputs.scenario-type != 'agentic-coding' }}
@@ -460,12 +496,12 @@ jobs:
           rm -f agent_preds.json predictions.jsonl swebench_report_*.json *.traj* || true
           
       - name: Repair root-owned artifacts (post-run)
-        if: ${{ always() && inputs.runner == 'cluster:mi355x-amds' }}
+        if: ${{ always() && inputs.runner == 'cluster:mi355x-amds' && inputs.allocation-job-id == '' }}
         run: |
           if [[ -d "$GITHUB_WORKSPACE" ]]; then
             sudo chown -R "$(id -u):$(id -g)" "$GITHUB_WORKSPACE"
           fi
 
       - name: Resource cleanup (post-run)
-        if: always()
+        if: ${{ always() && inputs.allocation-job-id == '' }}
         run: *resource-cleanup

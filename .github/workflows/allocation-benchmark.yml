@@ -1,0 +1,96 @@
+name: Allocation - GLM SGLang
+on:
+  push:
+    branches: [tuning/allocation-ci]
+    paths: [.github/allocation-request.json]
+  workflow_dispatch:
+    inputs:
+      job-id:
+        description: Existing exclusive eight-GPU allocation
+        required: true
+        type: string
+      node:
+        description: Allocated node hostname
+        required: true
+        type: string
+      validate-only:
+        description: Check allocation and model files without starting a container
+        type: boolean
+        default: true
+permissions:
+  contents: read
+concurrency:
+  group: allocation-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      config: ${{ steps.config.outputs.config }}
+      job-id: ${{ steps.request.outputs.job-id }}
+      node: ${{ steps.request.outputs.node }}
+      validate-only: ${{ steps.request.outputs.validate-only }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+      - id: request
+        env:
+          REQUEST_JOB: ${{ inputs.job-id }}
+          REQUEST_NODE: ${{ inputs.node }}
+          REQUEST_VALIDATE: ${{ inputs.validate-only }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re
+          if os.environ['EVENT'] == 'push':
+              request = json.load(open('.github/allocation-request.json'))
+          else:
+              request = {'job-id': os.environ['REQUEST_JOB'], 'node': os.environ['REQUEST_NODE'],
+                         'validate-only': os.environ['REQUEST_VALIDATE'] == 'true'}
+          assert re.fullmatch(r'[0-9]+', request['job-id']), 'Invalid job ID'
+          assert re.fullmatch(r'[a-zA-Z0-9-]+', request['node']), 'Invalid node'
+          assert isinstance(request['validate-only'], bool), 'Invalid mode'
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              for key in ('job-id', 'node', 'validate-only'):
+                  value = request[key]
+                  f.write(key + '=' + (str(value).lower() if isinstance(value, bool) else value) + '\n')
+          PY
+      - id: config
+        run: |
+          uv run --no-project --python 3.12 --with pydantic --with pyyaml \
+            python -m infx.matrix.generate test-config \
+            --config-files configs/amd-master.yaml \
+            --config-keys glm5.2-fp4-mi355x-sglang-agentic-mtp \
+            --conc 4 --no-evals > matrix.json
+          python3 - <<'PY'
+          import json, os
+          rows = json.load(open('matrix.json'))
+          rows = [r for r in rows if r['tp'] == 4 and r['ep'] == 4
+                  and r['kv-offloading'] == 'dram']
+          if len(rows) != 1:
+              raise SystemExit('Expected exactly one baseline configuration')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write('config=' + json.dumps(rows[0]) + '\n')
+          PY
+  benchmark:
+    needs: prepare
+    uses: ./.github/workflows/benchmark-tmpl.yml
+    secrets:
+      INFERENCEX_OFFICIAL_RO_HF_TOKEN: ${{ secrets.INFERENCEX_OFFICIAL_RO_HF_TOKEN }}
+    with:
+      config: ${{ needs.prepare.outputs.config }}
+      runner: cluster:mi355x-amds
+      priority: '0'
+      queue-token: allocation-${{ github.run_id }}
+      dp-attn: false
+      run-eval: false
+      scenario-type: agentic-coding
+      duration: '3600'
+      ref: ${{ github.sha }}
+      allocation-job-id: ${{ needs.prepare.outputs.job-id }}
+      allocation-node: ${{ needs.prepare.outputs.node }}
+      allocation-model-path: /share_nfs/models/amd/GLM-5.2-MXFP4
+      allocation-hf-home: /share_nfs/gguasti/inferencex/cache/huggingface
+      allocation-validate-only: ${{ fromJSON(needs.prepare.outputs.validate-only) }}

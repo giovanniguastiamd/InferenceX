@@ -10,6 +10,10 @@ Use this page for matrix generation, CI dispatch, PR sweeps, result staging, art
 
 ## Procedure index
 
+For a temporary runner on an already reserved Spur node, see
+[Existing-allocation CI](allocation-ci.md). This dedicated path avoids the
+generic pool's allocation and cleanup behavior.
+
 | Task | Go to |
 | --- | --- |
 | Identify the authoritative implementation | [Source map](#source-map) |

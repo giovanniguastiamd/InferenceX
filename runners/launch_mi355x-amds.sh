@@ -3,6 +3,25 @@
 source "$(dirname "${BASH_SOURCE[0]}")/../benchmarks/benchmark_lib.sh" --validation-only || exit 1
 check_env_vars EVAL_ONLY IS_AGENTIC IS_MULTINODE KEEP_LOGS RUN_EVAL
 
+# A dedicated workflow supplies an existing reservation. Generic CI never sets
+# this input and retains its original path. No salloc or global cleanup here.
+if [[ -n "${ALLOCATION_JOB_ID:-}" ]]; then
+    check_env_vars ALLOCATION_NODE ALLOCATION_MODEL_PATH ALLOCATION_HF_HOME \
+        ALLOCATION_VALIDATE_ONLY GITHUB_WORKSPACE GITHUB_RUN_ID GITHUB_RUN_ATTEMPT \
+        INFERENCEX_RUNTIME_ENV_VARS MODEL_PREFIX FRAMEWORK PRECISION IMAGE
+    if [[ "$IS_MULTINODE" != false || "$IS_AGENTIC" != 1 || "$MODEL_PREFIX" != glm5.2 || "$FRAMEWORK" != sglang || "$PRECISION" != fp4 ]]; then
+        echo "Existing-allocation path currently supports GLM-5.2 FP4 SGLang AgentX only" >&2
+        exit 1
+    fi
+    case "$ALLOCATION_VALIDATE_ONLY" in
+        true) allocation_args=(--validate-only) ;;
+        false) allocation_args=() ;;
+        *) echo "ALLOCATION_VALIDATE_ONLY must be true or false" >&2; exit 1 ;;
+    esac
+    exec python3 utils/allocation_guard.py \
+        benchmarks/single_node/agentic/glm5.2_fp4_mi355x_sglang_mtp.sh "${allocation_args[@]}"
+fi
+
 scancel_sync() {
     local jobid=$1
     local timeout=${2:-600}
