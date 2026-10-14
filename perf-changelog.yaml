@@ -8776,3 +8776,12 @@
     - "Verify every model and dataset file against immutable revision manifests on the existing-allocation path before container creation. Export the pinned 062126 Weka train split in HF row order and consume it with AIPerf's native file loader, mounted read-only; no mutable dataset download. Recheck allocation while hashing and preserve integrity reports. No benchmark performance claim."
     - "在现有资源分配路径创建容器前，按不可变 revision 清单检查全部模型和数据集文件。按 HF 行顺序导出固定的 062126 Weka train split，用 AIPerf 原生文件 loader 只读消费，避免可变数据集下载。计算 hash 时检查资源分配并保留完整性报告。不宣称性能改进。"
   pr-link: https://github.com/SemiAnalysisAI/InferenceX/pull/XXX
+
+- config-keys:
+    - glm5.2-fp4-mi355x-sglang-agentic-mtp
+  scenario-type:
+    - agentic-coding
+  description:
+    - "Use the native AITER_JIT_DIR override for private writable compilation in the allocation container. The pinned ROCm image has unreadable packaged flydsl cache files that otherwise kill startup under the operator UID. Image and kernel source are unchanged; compilation occurs before measurement."
+    - "资源分配容器使用原生 AITER_JIT_DIR 设置，在私有可写目录中编译。固定 ROCm 镜像中不可读的 flydsl 缓存文件会导致操作者 UID 下的启动失败。镜像和内核源码保持不变；编译在测量前完成。"
+  pr-link: https://github.com/SemiAnalysisAI/InferenceX/pull/XXX

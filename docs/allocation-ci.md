@@ -36,6 +36,13 @@ mounted at `/hf`. The container uses the operator's UID/GID and explicit GPU
 devices, without privileged mode. Allocation evidence is uploaded separately.
 Recipe artifacts retain the reusable workflow's standard upload paths.
 
+The pinned ROCm image contains unreadable AITER build-cache files. The allocation
+container sets the native `AITER_JIT_DIR=/tmp/inferencex-aiter-jit` override to
+build in a private writable directory, avoiding AITER's automatic copy of that
+cache. Kernels and image files are unchanged. Compilation is part of startup,
+before readiness and measurement. Cleanup tolerates a container already removed
+by Docker's `--rm`; other cleanup errors remain visible.
+
 ## Effective configuration gate (M2e)
 
 Real execution requires `image-digest: sha256:<64 hex digits>` in the request

@@ -28,6 +28,11 @@ SGLang AgentX 配置（TP4/EP4、HiCache、并发数 4）。可复用的 benchma
 UID/GID 和明确的 GPU 设备，不使用 privileged 模式。资源分配证据单独上传；配方产物
 沿用可复用工作流的标准上传路径。
 
+固定的 ROCm 镜像含有不可读的 AITER 构建缓存文件。资源分配容器设置原生
+`AITER_JIT_DIR=/tmp/inferencex-aiter-jit`，在私有可写目录中构建，避免 AITER
+自动复制该缓存。内核和镜像文件保持不变。编译发生在服务就绪与测量之前的启动阶段。
+清理允许容器已被 Docker 的 `--rm` 删除；其他清理错误仍会显示。
+
 ## 实际配置检查（M2e）
 
 实际执行必须在请求或手动触发输入中提供 `image-digest: sha256:<64 hex digits>`。

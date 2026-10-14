@@ -77,6 +77,7 @@ def container_command(env, name, recipe):
         if key in env:
             args += ["-e", key]
     args += ["-e", "MODEL_PATH=/model", "-e", "HF_HOME=/hf", "-e", "HF_HUB_CACHE=/hf/hub",
+             "-e", "AITER_JIT_DIR=/tmp/inferencex-aiter-jit",
              "-e", "HOME=/tmp/inferencex-home", "-e", "SLURM_JOB_ID=" + env["ALLOCATION_JOB_ID"],
              "-e", "ALLOCATION_DATASET_PATH=/dataset",
              "-e", "SLURMD_NODENAME=" + env["ALLOCATION_NODE"],
@@ -229,7 +230,10 @@ def _execute(env, recipe, validate_only, evidence, path):
             signal.signal(sig, handler)
         # Exact unique name only; never prune, cancel the allocation, or sweep containers.
         try:
-            subprocess.run(["docker", "rm", "-f", name], timeout=30, check=False)
+            cleanup = subprocess.run(["docker", "rm", "-f", name], timeout=30, check=False,
+                                     capture_output=True, text=True)
+            if cleanup.returncode and "No such container" not in cleanup.stderr:
+                print(cleanup.stderr, file=sys.stderr, end="")
         finally:
             if child is not None and child.poll() is None:
                 child.terminate()

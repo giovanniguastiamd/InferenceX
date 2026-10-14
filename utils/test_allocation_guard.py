@@ -52,7 +52,7 @@ class AllocationGuardTests(unittest.TestCase):
     def test_validate_only_writes_evidence_without_docker(self):
         with patch.object(guard, 'check', return_value={'JobId': '42'}), \
              patch.object(guard, 'output', return_value='b' * 40), \
-             patch.object(guard.subprocess, 'run') as run:
+             patch.object(guard.subprocess, 'run', return_value=guard.subprocess.CompletedProcess([], 0, stderr='')) as run:
             self.assertEqual(guard.execute(self.env, 'recipe.sh', True), 0)
             run.assert_not_called()
         data = json.loads((Path(self.tmp.name) / 'allocation-evidence.json').read_text())
@@ -75,6 +75,7 @@ class AllocationGuardTests(unittest.TestCase):
         self.assertNotIn('also-not-in-command', argv)
         self.assertIn('OPENAI_API_KEY', argv)
         self.assertNotIn('--privileged', argv)
+        self.assertIn('AITER_JIT_DIR=/tmp/inferencex-aiter-jit', argv)
 
     def test_allocation_loss_stops_only_this_container(self):
         child = Mock()
@@ -84,7 +85,7 @@ class AllocationGuardTests(unittest.TestCase):
              patch.object(guard, 'resolve_image', return_value=('test-image@sha256:' + 'c' * 64, 'sha256:' + 'd' * 64)), \
              patch.object(guard, 'container_command', return_value=['docker', 'run']), \
              patch.object(guard.subprocess, 'Popen', return_value=child), \
-             patch.object(guard.subprocess, 'run') as run:
+             patch.object(guard.subprocess, 'run', return_value=guard.subprocess.CompletedProcess([], 0, stderr='')) as run:
             with self.assertRaisesRegex(ValueError, 'allocation lost'):
                 guard.execute(self.env, 'recipe.sh')
         self.assertEqual(run.call_args_list[-1].args[0], ['docker', 'rm', '-f', 'infx-42-123-1'])
@@ -98,16 +99,16 @@ class AllocationGuardTests(unittest.TestCase):
         self.env['IMAGE'] = 'registry.example:5000/org/server:mutable'
         reference = 'registry.example:5000/org/server@sha256:' + 'c' * 64
         image_id = 'sha256:' + 'd' * 64
-        with patch.object(guard.subprocess, 'run'), \
+        with patch.object(guard.subprocess, 'run', return_value=guard.subprocess.CompletedProcess([], 0, stderr='')), \
              patch.object(guard, 'output', return_value=json.dumps([{'Id': image_id, 'RepoDigests': [reference]}])):
             self.assertEqual(guard.resolve_image(self.env), (reference, image_id))
 
     def test_missing_or_unreported_registry_digest_is_rejected(self):
-        with patch.object(guard.subprocess, 'run') as run:
+        with patch.object(guard.subprocess, 'run', return_value=guard.subprocess.CompletedProcess([], 0, stderr='')) as run:
             with self.assertRaisesRegex(ValueError, 'ALLOCATION_IMAGE_DIGEST'):
                 guard.resolve_image(dict(self.env, ALLOCATION_IMAGE_DIGEST=''))
             run.assert_not_called()
-        with patch.object(guard.subprocess, 'run'), \
+        with patch.object(guard.subprocess, 'run', return_value=guard.subprocess.CompletedProcess([], 0, stderr='')), \
              patch.object(guard, 'output', return_value='[{"Id": "sha256:x", "RepoDigests": []}]'):
             with self.assertRaisesRegex(ValueError, 'registry digest'):
                 guard.resolve_image(self.env)
@@ -117,7 +118,7 @@ class AllocationGuardTests(unittest.TestCase):
              patch.object(guard, 'output', side_effect=['commit', '', 'unexpected-image']), \
              patch.object(guard, 'resolve_image', return_value=('test-image@sha256:' + 'c' * 64, 'sha256:' + 'd' * 64)), \
              patch.object(guard, 'container_command', return_value=['docker', 'create']), \
-             patch.object(guard.subprocess, 'run'), \
+             patch.object(guard.subprocess, 'run', return_value=guard.subprocess.CompletedProcess([], 0, stderr='')), \
              patch.object(guard.subprocess, 'Popen') as start:
             with self.assertRaisesRegex(ValueError, 'Created container image'):
                 guard.execute(self.env, 'recipe.sh')
@@ -135,7 +136,7 @@ class AllocationGuardTests(unittest.TestCase):
              patch.object(guard, 'output', side_effect=['commit', '', 'sha256:' + 'd' * 64]), \
              patch.object(guard, 'resolve_image', return_value=('test-image@sha256:' + 'c' * 64, 'sha256:' + 'd' * 64)), \
              patch.object(guard, 'container_command', return_value=['docker', 'create']), \
-             patch.object(guard.subprocess, 'run'), \
+             patch.object(guard.subprocess, 'run', return_value=guard.subprocess.CompletedProcess([], 0, stderr='')), \
              patch.object(guard.subprocess, 'Popen', return_value=child):
             with self.assertRaises(FileNotFoundError):
                 guard.execute(self.env, 'recipe.sh')
@@ -152,7 +153,7 @@ class AllocationGuardTests(unittest.TestCase):
              patch.object(guard, 'output', side_effect=['b' * 40, '', 'sha256:' + 'd' * 64]), \
              patch.object(guard, 'resolve_image', return_value=('test-image@sha256:' + 'c' * 64, 'sha256:' + 'd' * 64)), \
              patch.object(guard, 'container_command', return_value=['docker', 'create']), \
-             patch.object(guard.subprocess, 'run'), \
+             patch.object(guard.subprocess, 'run', return_value=guard.subprocess.CompletedProcess([], 0, stderr='')), \
              patch.object(guard.subprocess, 'Popen', side_effect=started):
             self.assertEqual(guard.execute(self.env, 'recipe.sh'), 0)
         data = json.loads((Path(self.tmp.name) / 'allocation-evidence.json').read_text())
@@ -175,7 +176,7 @@ class AllocationGuardTests(unittest.TestCase):
     def test_existing_container_blocks_execution(self):
         with patch.object(guard, 'check', return_value={}), \
              patch.object(guard, 'output', side_effect=['commit', 'foreign-container']), \
-             patch.object(guard.subprocess, 'run') as run:
+             patch.object(guard.subprocess, 'run', return_value=guard.subprocess.CompletedProcess([], 0, stderr='')) as run:
             with self.assertRaisesRegex(ValueError, 'Running containers'):
                 guard.execute(self.env, 'recipe.sh')
             run.assert_not_called()
