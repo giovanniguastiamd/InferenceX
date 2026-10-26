@@ -9757,5 +9757,6 @@
     - agentic-coding
   description:
     - "Enable SGLANG_GDN_FUSED_QKV_NORM=1 only for the C2 variant, using the existing implementation inherited from Chang's recipe and runtime."
+    - "Port the historical Hyperloom C16 parameter candidate: chunked-prefill-size 8192, mem-fraction-static 0.88, and cuda-graph-max-bs-decode 16, retaining max-running-requests 32. This port requires validation on the inherited current runtime."
     - "Hyperloom contributes recipe feature-flag tuning; the SGLang/AITER patches and GPU kernel implementations remain those of SemiAnalysisAI/InferenceX PR 3974."
   pr-link: https://github.com/giovanniguastiamd/InferenceX/pull/1
