@@ -1,0 +1,247 @@
+From 9d33d45f86cf6b2e3dcf7566ee8c6fa916761d23 Mon Sep 17 00:00:00 2001
+From: Nikolai Protasov <nprotaso@amd.com>
+Date: Thu, 15 Oct 2026 19:38:17 +0000
+Subject: [PATCH] [AMD][Qwen3.8] Align unfinished prefill chunks to the QSA
+ page
+
+Exact chunk fill is a compute optimization and must not split QSA compression
+groups: unfinished chunks now end on a multiple of the KV pool's
+prefill_chunk_alignment (the QSA page size), combined with the truncation and
+KV-shard alignments. Final chunks may still end at any token.
+
+From amd-nprotaso/sglang qwen_3_8_improvement: d309df65df.
+---
+ python/sglang/srt/managers/schedule_policy.py | 45 ++++++++--
+ python/sglang/srt/managers/scheduler.py       |  5 ++
+ python/sglang/srt/mem_cache/qsa_kv_pool.py    |  4 +
+ .../unit/managers/test_prefill_adder.py       | 83 +++++++++++++++++++
+ 4 files changed, 131 insertions(+), 6 deletions(-)
+
+diff --git a/python/sglang/srt/managers/schedule_policy.py b/python/sglang/srt/managers/schedule_policy.py
+index 9f6d152173..07c4a33eda 100644
+--- a/python/sglang/srt/managers/schedule_policy.py
++++ b/python/sglang/srt/managers/schedule_policy.py
+@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
+ # ==============================================================================
+ """Request scheduler policy"""
+ 
++import math
+ import os
+ import random
+ from collections import Counter
+@@ -597,8 +598,10 @@ class PrefillAdder:
+         dllm_config: Optional[DllmConfig] = None,
+         waiting_queue_len: int = 0,
+         prefill_tile_block_m: int = 64,
++        prefill_chunk_alignment: int = 1,
+     ):
+         self.page_size = page_size
++        self.prefill_chunk_alignment = prefill_chunk_alignment
+         self.prefill_tile_block_m = prefill_tile_block_m
+         self.tree_cache = tree_cache
+         self.token_to_kv_pool_allocator = token_to_kv_pool_allocator
+@@ -1089,6 +1092,25 @@ class PrefillAdder:
+             else AddReqResult.CONTINUE
+         )
+ 
++    def _align_prefill_chunk(
++        self, prefix_len: int, extend_len: int, truncation_align_size: Optional[int] = None
++    ) -> int:
++        """Align an unfinished chunk's absolute end to the cache requirement.
++
++        Exact fill is a compute optimization; it must not split compression
++        groups. Call only for unfinished chunks, since a final chunk may end
++        at any token. Backends without a requirement retain existing behavior.
++        """
++        if self.prefill_chunk_alignment <= 1:
++            return extend_len
++        alignment = math.lcm(
++            self.prefill_chunk_alignment,
++            truncation_align_size or 1,
++            self.kv_shard_granule or 1,
++        )
++        end = (prefix_len + extend_len) // alignment * alignment
++        return max(0, end - prefix_len)
++
+     def add_chunked_req(self, req: Req):
+         if self.dllm_config is not None:
+             _rem_tokens = self._get_dllm_remain_tokens(req)
+@@ -1132,6 +1154,10 @@ class PrefillAdder:
+             return req
+         truncated = cand_extend_input_len > _rem_tokens
+         new_len = min(cand_extend_input_len, _rem_tokens)
++        if truncated:
++            new_len = self._align_prefill_chunk(req.prefix_len, new_len)
++            if new_len <= 0:
++                return req
+         request_slot_reserve = self._request_slot_reserve_for_req(
+             req, extend_input_len=new_len
+         )
+@@ -1306,7 +1332,11 @@ class PrefillAdder:
+                 return AddReqResult.OTHER
+ 
+             # Chunked prefill
+-            trunc_len = self.rem_chunk_tokens
++            trunc_len = self._align_prefill_chunk(
++                req.prefix_len, self.rem_chunk_tokens
++            )
++            if trunc_len <= 0:
++                return AddReqResult.OTHER
+ 
+             if (tile_stop := self._check_prefill_tile_budget(trunc_len)) is not None:
+                 return tile_stop
+@@ -1554,11 +1584,11 @@ class PrefillAdder:
+                 # Only one unfinished chunked request can be tracked.
+                 return AddReqResult.OTHER
+             if self.exact_chunk_fill:
+-                # Take the remainder verbatim so the batch hits exactly
+-                # chunked_prefill_size. `chunk_fit_tokens > chunk_tokens_limit`
+-                # here, so this never runs past the end of the prompt. Uses the
+-                # limit rather than rem_chunk_tokens so an SWA-capped chunk stays
+-                # capped.
++                # Take the remainder, subject to the cache alignment below,
++                # so the batch approaches chunked_prefill_size. The limit is
++                # below chunk_fit_tokens, so this cannot run past the prompt.
++                # Use the limit rather than rem_chunk_tokens so an SWA-capped
++                # chunk stays capped.
+                 extend_len = chunk_tokens_limit
+                 if truncation_align_size is not None:
+                     extend_len = (
+@@ -1572,6 +1602,9 @@ class PrefillAdder:
+                     )
+                 end = (prefix_len + extend_len) // self.page_size * self.page_size
+                 extend_len = end - prefix_len
++            extend_len = self._align_prefill_chunk(
++                prefix_len, extend_len, truncation_align_size
++            )
+             if extend_len <= 0:
+                 return AddReqResult.OTHER
+             is_chunked = True
+diff --git a/python/sglang/srt/managers/scheduler.py b/python/sglang/srt/managers/scheduler.py
+index 79efa0bacc..845f03b2fc 100644
+--- a/python/sglang/srt/managers/scheduler.py
++++ b/python/sglang/srt/managers/scheduler.py
+@@ -4048,6 +4048,11 @@ class Scheduler(
+             dllm_config=self.dllm_config,
+             waiting_queue_len=len(self.waiting_queue),
+             prefill_tile_block_m=prefill_tile_block_m,
++            prefill_chunk_alignment=getattr(
++                self.token_to_kv_pool_allocator.get_kvcache(),
++                "prefill_chunk_alignment",
++                1,
++            ),
+         )
+ 
+         if self.chunked_req is not None:
+diff --git a/python/sglang/srt/mem_cache/qsa_kv_pool.py b/python/sglang/srt/mem_cache/qsa_kv_pool.py
+index 4a21488be7..103ae52de7 100644
+--- a/python/sglang/srt/mem_cache/qsa_kv_pool.py
++++ b/python/sglang/srt/mem_cache/qsa_kv_pool.py
+@@ -55,6 +55,10 @@ class QSATokenToKVPool(HybridLinearKVPool):
+     # Pending-ring dtype: the raw keys are averaged from here, so it stays bf16.
+     index_state_dtype = torch.bfloat16
+ 
++    @property
++    def prefill_chunk_alignment(self) -> int:
++        return self.page_size
++
+     @classmethod
+     def qsa_bytes_per_token(
+         cls,
+diff --git a/test/registered/unit/managers/test_prefill_adder.py b/test/registered/unit/managers/test_prefill_adder.py
+index 702140ff4b..0c59a3f30f 100644
+--- a/test/registered/unit/managers/test_prefill_adder.py
++++ b/test/registered/unit/managers/test_prefill_adder.py
+@@ -1775,6 +1775,89 @@ class TestPrefillAdder(CustomTestCase):
+         req.sampling_params.ignore_eos = False
+         return req
+ 
++    def test_exact_fill_respects_cache_alignment_for_new_chunks(self):
++        # A short completion leaves a non-page-aligned budget for the next req.
++        # Check both normal admission and the no-prefix-cache ignore-EOS path.
++        for ignore_eos in (False, True):
++            for tail in (101, 102, 103):
++                with self.subTest(ignore_eos=ignore_eos, tail=tail):
++                    adder = self._create_delayer_adder(
++                        available_tokens=1_000_000,
++                        delayer=None,
++                        page_size=64,
++                        rem_input_tokens=16384,
++                        rem_chunk_tokens=16384,
++                        prefill_chunk_alignment=64,
++                    )
++                    adder.exact_chunk_fill = True
++                    self.mock_tree_cache.disable = ignore_eos
++                    first = self._create_delayer_req(tail)
++                    second = self._create_delayer_req(32769)
++                    for req in (first, second):
++                        req.sampling_params.ignore_eos = ignore_eos
++                        req.origin_input_ids = req.full_untruncated_fill_ids
++                        adder.add_one_req(req, False, None)
++                    self.assertEqual(first.extend_len, tail)
++                    self.assertEqual(second.extend_len, 16256)
++                    self.assertIs(adder.new_chunked_req, second)
++                    self.assertEqual(adder.rem_chunk_tokens, 128 - tail)
++                    # KV is still billed in pages, independently of compute.
++                    self.assertEqual(adder.memory_budget.current_offset, 16512)
++
++    def test_cache_alignment_continuation_and_final_chunk(self):
++        # An arbitrary continuation budget must preserve the absolute boundary.
++        # Final chunks may be shorter than alignment; defer if an unfinished
++        # chunk cannot reach even the next boundary.
++        for budget, remaining, expected in ((101, 200, 64), (63, 200, 0), (63, 3, 3)):
++            with self.subTest(budget=budget, remaining=remaining):
++                adder = self._create_delayer_adder(
++                    available_tokens=1_000_000,
++                    delayer=None,
++                    page_size=64,
++                    rem_chunk_tokens=budget,
++                    prefill_chunk_alignment=64,
++                )
++                adder.exact_chunk_fill = True
++                req = self._create_delayer_req(128 + remaining)
++                req.prefix_len = 128
++                result = adder.add_chunked_req(req)
++                if expected:
++                    self.assertEqual(req.extend_end, 128 + expected)
++                    self.assertEqual(adder.rem_chunk_tokens, budget - expected)
++                else:
++                    self.assertIsNone(req.extend_end)
++                    self.assertEqual(adder.can_run_list, [])
++                    self.assertEqual(adder.rem_chunk_tokens, budget)
++                self.assertIs(result, None if expected == remaining else req)
++
++    def test_cache_alignment_absolute_boundary_and_other_alignment(self):
++        # Use admission itself: combining 64-token cache pages and 96-token
++        # truncation tiles requires an absolute boundary at 192, not 256.
++        adder = self._create_delayer_adder(
++            available_tokens=1_000_000,
++            delayer=None,
++            page_size=64,
++            rem_chunk_tokens=250,
++            prefill_chunk_alignment=64,
++        )
++        adder.exact_chunk_fill = True
++        req = self._create_delayer_req(1000)
++        req.prefix_len = 64
++        adder.add_one_req(req, False, 96)
++        self.assertEqual(req.extend_end, 192)
++
++    def test_exact_fill_without_cache_requirement_keeps_remainder(self):
++        adder = self._create_delayer_adder(
++            available_tokens=1_000_000,
++            delayer=None,
++            page_size=64,
++            rem_chunk_tokens=16283,
++        )
++        adder.exact_chunk_fill = True
++        req = self._create_delayer_req(32769)
++        adder.add_one_req(req, False, None)
++        self.assertEqual(req.extend_len, 16283)
++
+     def test_add_chunked_req_non_hybrid_no_swa_reservation(self):
+         # Non-hybrid path: the SWA-pool reservation must NOT apply, otherwise
+         # the fix would regress non-SWA models.
+-- 
+2.34.1
+

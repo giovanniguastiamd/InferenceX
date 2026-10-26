@@ -1,0 +1,196 @@
+# Qwen3.8-Flash-Next Quark MXFP4 MoE (MTP experts included), FP8 attention and
+# FP8 PLE, AgentX on MI355X via SGLang with native NEXTN MTP. The ~116 GiB
+# checkpoint fits on one MI355X, so TP1.
+base:
+  schema: 2
+  name: qwen3.8next-fp4-mi355x-sglang-agentic
+  resources:
+    gpu_type: mi355x
+    gpus_per_node: 8
+  frontend:
+    type: sglang
+    enable_multiple_frontends: false
+  observability:
+    enabled: false
+    tachometer:
+      enabled: false
+  engine: sglang
+  # Qwen3.8 AITER/FlyDSL kernels and SGLang dispatch (GDN conv/decode/prefill,
+  # fused QK-norm/RoPE/gate, hc_mix, QSA paged decode, topk gating, ratio-3
+  # packing) and exact-chunk-fill / shared-expert loading fixes, patched into
+  # the upstream ROCm 10 image. The patch files are in patches/ next to this
+  # recipe.
+  setup_script: qwen3.8next-rocm10-patches.sh
+  roles:
+    agg:
+      nodes: 1
+      workers: 1
+      gpus: 1
+      args:
+        served-model-name: amd/Qwen3.8-Flash-Next-Quark-MXFP4-AttnFP8-PLEFP8
+        tokenizer-path: amd/Qwen3.8-Flash-Next-Quark-MXFP4-AttnFP8-PLEFP8
+        trust-remote-code: true
+        tensor-parallel-size: 1
+        data-parallel-size: 1
+        expert-parallel-size: 1
+        quantization: quark
+        attention-backend: aiter
+        page-size: 64
+        kv-cache-dtype: auto
+        mem-fraction-static: 0.9
+        model-loader-extra-config: '{"enable_multithread_load": true}'
+        watchdog-timeout: 1200
+        chunked-prefill-size: 16384
+        mamba-ssm-dtype: bfloat16
+        # PLE n-gram table in CPU pinned memory; offload needs the fp8 storage
+        # declared up front instead of switched to at load.
+        ple-offload-embedding: true
+        json-model-override-args: '{"text_config": {"ple_embedding_dtype": "float8_e4m3fn"}}'
+        scheduler-recv-interval: 10
+        stream-interval: 50
+        reasoning-parser: qwen3
+        default-chat-template-kwargs: '{"enable_thinking": false}'
+        tool-call-parser: qwen3_coder
+        speculative-algorithm: NEXTN
+        speculative-num-steps: 3
+        speculative-eagle-topk: 1
+        speculative-num-draft-tokens: 4
+        # GDN target verify folds each commit through a raw-input window instead
+        # of per-draft state snapshots; needs the linear draft chain (topk 1).
+        enable-linear-replayssm-spec: true
+        tokenizer-worker-num: 6
+        enable-metrics: true
+        enable-cache-report: true
+      env:
+        PYTHONNOUSERSITE: '1'
+        SGLANG_USE_AITER: '1'
+        SGLANG_USE_AITER_UNIFIED_ATTN: '1'
+        AITER_FLYDSL_FORCE: '1'
+        ROCM_QUICK_REDUCE_QUANTIZATION: INT8
+        # Outlast AIPerf's 300 s client connection pool.
+        SGLANG_TIMEOUT_KEEP_ALIVE: '1800'
+        SGLANG_ENABLE_SPEC_V2: '1'
+        # Opt-in FlyDSL kernels from the patches: GDN causal conv1d, GDN decode and
+        # MTP verify, QSA paged decode, and the fused GDN chunked prefill.
+        SGLANG_AITER_GDN_CONV: '1'
+        SGLANG_AITER_GDN_DECODE: '1'
+        SGLANG_AITER_QSA_PA_DECODE: '1'
+        SGLANG_AITER_GDN_PREFILL: '1'
+        SGLANG_AITER_GDN_PREFILL_H: fused
+        AITER_GDR_FLYDSL: '1'
+        # Decode optimizations from the patches: shared per-token FP8 attention
+        # input quant, fused GDN gated norm + out_proj quant, shared-expert gate
+        # folded into the router, and the BF16 lm_head through tgemm.
+        SGLANG_OPT_QWEN4_SHARED_ATTN_QUANT: '1'
+        SGLANG_OPT_QWEN4_FUSED_GDN_NORM_QUANT: '1'
+        SGLANG_OPT_QWEN_MOE_FUSED_SHARED_TOPK: '1'
+        SGLANG_OPT_AITER_LM_HEAD_GEMM: '1'
+        # HC norm and inject GEMV folded into the FlyDSL HC mix for <= 128 rows
+        # (forwards outside the monokernel).
+        SGLANG_OPT_QWEN4_FUSED_HC: '1'
+  benchmark:
+    env:
+      AIPERF_REQUIRED_SERVER_METRIC_PREFIX: 'sglang:'
+      AIPERF_APPLY_CHAT_TEMPLATE: 'true'
+
+# One variant per point. c1, c2, c4 and c8 run the FlyDSL monokernel for MTP
+# target verify and draft (up to 8 requests): its verify writes the per-draft
+# intermediate SSM states, so ReplaySSM is off, admission equals the decode graph
+# batch, and mem-fraction-static is used as given instead of the aiter backend's
+# 0.85 scaling. c8 drafts one token per step (2 verify tokens). c12 and c16 keep
+# ReplaySSM, 2x CONC admission and the default path.
+override_c1:
+  roles:
+    agg:
+      args:
+        enable-linear-replayssm-spec: null
+        max-running-requests: 1
+        cuda-graph-max-bs-decode: 1
+      env:
+        SGLANG_ENABLE_QWEN4_MONOKERNEL: '1'
+        SGLANG_ENABLE_QWEN4_MTP_MONOKERNEL: '1'
+        SGLANG_AITER_HONOR_EXPLICIT_MEM_FRACTION: '1'
+  benchmark:
+    env:
+      CONC: '1'
+      KV_OFFLOADING: none
+
+override_c2:
+  roles:
+    agg:
+      args:
+        enable-linear-replayssm-spec: null
+        max-running-requests: 2
+        cuda-graph-max-bs-decode: 2
+      env:
+        SGLANG_ENABLE_QWEN4_MONOKERNEL: '1'
+        SGLANG_ENABLE_QWEN4_MTP_MONOKERNEL: '1'
+        SGLANG_AITER_HONOR_EXPLICIT_MEM_FRACTION: '1'
+        SGLANG_GDN_FUSED_QKV_NORM: '1'
+  benchmark:
+    env:
+      CONC: '2'
+      KV_OFFLOADING: none
+
+override_c4:
+  roles:
+    agg:
+      args:
+        enable-linear-replayssm-spec: null
+        max-running-requests: 4
+        cuda-graph-max-bs-decode: 4
+      env:
+        SGLANG_ENABLE_QWEN4_MONOKERNEL: '1'
+        SGLANG_ENABLE_QWEN4_MTP_MONOKERNEL: '1'
+        SGLANG_AITER_HONOR_EXPLICIT_MEM_FRACTION: '1'
+  benchmark:
+    env:
+      CONC: '4'
+      KV_OFFLOADING: none
+
+override_c8:
+  roles:
+    agg:
+      args:
+        enable-linear-replayssm-spec: null
+        max-running-requests: 8
+        cuda-graph-max-bs-decode: 8
+        speculative-num-steps: 1
+        speculative-num-draft-tokens: 2
+      env:
+        SGLANG_ENABLE_QWEN4_MONOKERNEL: '1'
+        SGLANG_ENABLE_QWEN4_MTP_MONOKERNEL: '1'
+        SGLANG_AITER_HONOR_EXPLICIT_MEM_FRACTION: '1'
+  benchmark:
+    env:
+      CONC: '8'
+      KV_OFFLOADING: none
+
+override_c12:
+  roles:
+    agg:
+      args:
+        max-running-requests: 24
+        cuda-graph-max-bs-decode: 24
+        mem-fraction-static: 0.9
+      env:
+        SGLANG_AITER_HONOR_EXPLICIT_MEM_FRACTION: '1'
+  benchmark:
+    env:
+      CONC: '12'
+      KV_OFFLOADING: none
+
+override_c16:
+  roles:
+    agg:
+      args:
+        max-running-requests: 32
+        cuda-graph-max-bs-decode: 16
+        mem-fraction-static: 0.88
+        chunked-prefill-size: 8192
+      env:
+        SGLANG_AITER_HONOR_EXPLICIT_MEM_FRACTION: '1'
+  benchmark:
+    env:
+      CONC: '16'
+      KV_OFFLOADING: none
