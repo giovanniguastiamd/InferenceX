@@ -14,8 +14,11 @@ from . import github
 from .github import VerificationError
 from .models import OwnedCandidate, Ownership, identity
 
+RECONCILE_JOB = "Reconcile interrupted candidates"
+
 
 def ref(repository: str, name: str) -> dict | None:
+    """Return the ref record for branch ``name`` in ``repository``, or None if absent."""
     return next(
         (
             row
@@ -27,6 +30,10 @@ def ref(repository: str, name: str) -> dict | None:
 
 
 def record(repository: str, value: dict) -> dict:
+    """Return the JSON owner stored in the commit message of ref ``value``.
+
+    Raises VerificationError when the message is not readable JSON.
+    """
     commit = github.read(repository, "git/commits/" + value["object"]["sha"])
     try:
         return json.loads(commit["message"])
@@ -37,6 +44,11 @@ def record(repository: str, value: dict) -> dict:
 def create(
     repository: str, name: str, payload: dict, base: str, previous: dict | None = None
 ) -> bool:
+    """Point branch ``name`` at a new commit whose message is ``payload`` as JSON.
+
+    The commit sits on ``previous`` (fast-forward, no force) or on ``base`` for a new ref.
+    Return True if this caller won the ref, False if a concurrent writer did.
+    """
     parent = previous["object"]["sha"] if previous else base
     commit = github.read(repository, "git/commits/" + parent)
     new = github.write(
@@ -73,10 +85,12 @@ def create(
 
 
 def family_name(candidate: OwnedCandidate) -> str:
+    """Return the claim branch name derived from the candidate's family."""
     return "klaud/claim-" + identity(candidate.family)[:16]
 
 
 def claim_family(repository: str, candidate: OwnedCandidate, parent: int) -> bool:
+    """Claim the candidate's family for run ``parent`` and return True if this call won."""
     name = family_name(candidate)
     if ref(repository, name):
         return False
@@ -85,6 +99,7 @@ def claim_family(repository: str, candidate: OwnedCandidate, parent: int) -> boo
 
 
 def release_family(repository: str, candidate: OwnedCandidate, parent: int) -> None:
+    """Delete the candidate's family claim if run ``parent`` owns exactly that candidate."""
     name = family_name(candidate)
     value = ref(repository, name)
     if not value:
@@ -96,6 +111,7 @@ def release_family(repository: str, candidate: OwnedCandidate, parent: int) -> N
 
 
 def family_owners(repository: str) -> list[Ownership]:
+    """Return every family claim's ownership, raising VerificationError on a malformed one."""
     result = []
     for value in github.items(repository, "git/matching-refs/heads/klaud/claim-"):
         owner = Ownership.model_validate(record(repository, value))
@@ -108,6 +124,10 @@ def family_owners(repository: str) -> list[Ownership]:
 
 
 def recovery_lease(repository: str, parent: int, candidate: OwnedCandidate) -> bool:
+    """Take the recovery lease for ``candidate`` of run ``parent`` and return True if held.
+
+    A prior holder hands over only once its planner run or its reconcile job has completed.
+    """
     name = f"klaud/recovery-{parent}-{candidate.id}"
     owner = {
         "run-id": int(os.environ["GITHUB_RUN_ID"]),
@@ -119,11 +139,17 @@ def recovery_lease(repository: str, parent: int, candidate: OwnedCandidate) -> b
         if prior == owner:
             return True
         run = github.read(repository, f"actions/runs/{int(prior['run-id'])}")
-        if (
-            run["path"] != ".github/workflows/klaud-plan.yml"
-            or run["head_branch"] != "main"
-            or run["status"] != "completed"
-            or not run.get("conclusion")
-        ):
+        if run["path"] != ".github/workflows/klaud-plan.yml" or run["head_branch"] != "main":
             return False
+        if run["status"] != "completed" or not run.get("conclusion"):
+            jobs = github.items(
+                repository,
+                f"actions/runs/{int(prior['run-id'])}/attempts/{int(prior['run-attempt'])}"
+                "/jobs?per_page=100",
+                "jobs",
+            )
+            if not any(
+                job["name"] == RECONCILE_JOB and job["status"] == "completed" for job in jobs
+            ):
+                return False
     return create(repository, name, owner, candidate.base, previous)

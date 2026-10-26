@@ -1,9 +1,3 @@
-"""Recipe fingerprints: a matrix row's identity plus the concrete recipe its job runs.
-
-Concurrency, the job name and cluster facts stay out, so a recipe keeps one fingerprint across
-concurrencies and clusters.
-"""
-
 from __future__ import annotations
 
 import hashlib
@@ -30,20 +24,23 @@ EXPORTER_PORT = 0
 
 
 def _digest(value: Any) -> str:
+    """Return the SHA-256 hex digest of ``value`` serialized as canonical JSON."""
     canonical = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _row_identity(entry: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the row without the keys that do not identify a benchmark point."""
     return {key: value for key, value in entry.items() if key not in ROW_EXCLUDED}
 
 
 def row_fingerprint(entry: Mapping[str, Any]) -> str:
-    """The generated row alone: for rows without an srt-slurm recipe, and older revisions."""
+    """Return the digest of a matrix row, ignoring conc, experiment name, and fingerprint."""
     return _digest(_row_identity(entry))
 
 
 def _without(block: dict[str, Any], path: tuple[str, ...]) -> dict[str, Any]:
+    """Return a copy of ``block`` without the nested key at ``path``, or ``block`` if absent."""
     key, *rest = path
     if key not in block:
         return block
@@ -55,7 +52,7 @@ def _without(block: dict[str, Any], path: tuple[str, ...]) -> dict[str, Any]:
 
 
 def _concrete_recipes(entry: Mapping[str, Any], root: Path) -> list[dict[str, Any]]:
-    """The variant the launcher submits for ``entry`` under ``root``, minus point-level keys."""
+    """Render the row's bound srt recipe, minus the fields that vary per point or run."""
     power_port = EXPORTER_PORT if entry.get("power") else None
     _, recipe = bound_variant(
         entry, point_environment(entry), root, expand=expand_variants, power_port=power_port
@@ -66,7 +63,10 @@ def _concrete_recipes(entry: Mapping[str, Any], root: Path) -> list[dict[str, An
 
 
 def recipe_fingerprint(entry: Mapping[str, Any], root: Path) -> str:
-    """Hash ``entry``'s identity with its concrete recipe; recipes resolve under ``root``."""
+    """Return the digest of a row and its rendered srt recipe, or the row digest if it has none.
+
+    Raise ValueError naming the recipe and point when the recipe cannot be rendered.
+    """
     if not entry.get("srt-recipe"):
         return row_fingerprint(entry)
     try:
@@ -78,10 +78,7 @@ def recipe_fingerprint(entry: Mapping[str, Any], root: Path) -> str:
 
 
 def main() -> None:
-    """Print the fingerprints of the JSON matrix rows on stdin, resolved under this checkout.
-
-    Later revisions run this through ``revision.Revision.fingerprints``: keep the interface.
-    """
+    """Read matrix rows as JSON from stdin and print their recipe fingerprints as a JSON list."""
     root = repository_root()
     print(json.dumps([recipe_fingerprint(row, root) for row in json.load(sys.stdin)]))
 
