@@ -9756,7 +9756,6 @@
   scenario-type:
     - agentic-coding
   description:
-    - "Enable SGLANG_GDN_FUSED_QKV_NORM=1 only for the C2 variant, using the existing implementation inherited from the recipe and runtime in SemiAnalysisAI/InferenceX PR 3974."
-    - "Port the historical C16 parameter candidate: chunked-prefill-size 8192, mem-fraction-static 0.88, and cuda-graph-max-bs-decode 16, retaining max-running-requests 32. This port requires validation on the inherited current runtime."
-    - "This PR contributes recipe parameter and feature-flag tuning; the SGLang/AITER patches and GPU kernel implementations remain those of SemiAnalysisAI/InferenceX PR 3974."
-  pr-link: https://github.com/giovanniguastiamd/InferenceX/pull/1
+    - "Tune the C2 override with SGLANG_GDN_FUSED_QKV_NORM=1 and C16 with chunked-prefill-size 8192, mem-fraction-static 0.88, and cuda-graph-max-bs-decode 16; C16 retains max-running-requests 32."
+    - "Recipe parameter and feature-flag tuning on the SGLang/AITER patches and GPU kernel implementations from SemiAnalysisAI/InferenceX PR 3974."
+  pr-link: https://github.com/SemiAnalysisAI/InferenceX/pull/XXX
